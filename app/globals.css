@@ -1,26 +1,57 @@
-@import "tailwindcss";
+/* ---------------------------------------------------------------------------
+   Fogli di stile globali
+   ---------------------------------------------------------------------------
+   ATTENZIONE alle regole che si scrivono qui.
+
+   `AppRouterCacheProvider` e' configurato con `enableCssLayer: true`, quindi
+   tutti gli stili di MUI finiscono dentro `@layer mui`. Per le regole a cascata
+   un livello vale MENO di qualunque stile non incapsulato: questo file, che non
+   sta in alcun layer, sovrascrive MUI a prescindere dalla specificita'.
+
+   E' il motivo per cui qui NON c'e' il classico reset `* { box-sizing:
+   border-box }`. Sembra innocuo, ma sovrascriveva il `box-sizing: content-box`
+   che MUI applica di proposito a `.MuiInputBase-input`: l'altezza dichiarata
+   (1.4375em) veniva interpretata come misura comprensiva dei padding, il campo
+   collassava da 56px a 33px e la label - traslata come se il campo fosse ancora
+   alto 56px - finiva a cavallo del bordo inferiore, tagliata a meta'.
+
+   Il reset non serve comunque: `CssBaseline` di MUI imposta gia'
+   `html { box-sizing: border-box }` con `*, *::before, *::after { box-sizing:
+   inherit }`, e si occupa da solo delle eccezioni.
+
+   Regola pratica: qui dentro solo cio' che MUI non tocca (variabili, barre di
+   scorrimento, stampa). Tutto il resto va nel tema, in lib/theme.ts.
+--------------------------------------------------------------------------- */
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Stack di sistema: nessun download di font in fase di build, quindi
+     l'applicazione si compila anche in ambienti senza rete. */
+  --font-app: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, "Noto Sans", sans-serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+html,
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  height: 100%;
+}
+
+/* Barre di scorrimento discrete nelle tabelle e nei pannelli laterali. */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.18);
+  border-radius: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
 }

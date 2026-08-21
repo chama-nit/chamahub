@@ -1,0 +1,92 @@
+# ===========================================================================
+# Configurazione Supabase CLI - ChamaHub
+# ===========================================================================
+# `project_id` deve corrispondere al riferimento del progetto remoto
+# (Dashboard -> Project Settings -> General -> Reference ID) oppure essere un
+# nome qualunque se si lavora solo in locale.
+# ===========================================================================
+
+project_id = "chamahub"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+# Cattura le email in locale (inviti, recupero password).
+enabled = true
+port = 54324
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = [
+  "http://localhost:3000",
+  "http://localhost:3000/auth/callback",
+]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+# La registrazione autonoma resta possibile solo se abilitata: di norma i
+# dipendenti vengono creati dall'HR o accedono con Microsoft.
+enable_signup = true
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = true
+secure_password_change = true
+
+[auth.email.template.invite]
+subject = "Sei stato invitato su ChamaHub"
+
+# ---------------------------------------------------------------------------
+# Microsoft Entra ID (Azure AD)
+# ---------------------------------------------------------------------------
+# I valori non vanno scritti qui in chiaro: la CLI legge le variabili
+# d'ambiente indicate. Impostarle in `.env` locale e come secret in remoto.
+#
+#   AZURE_CLIENT_ID       -> "Application (client) ID" della registrazione app
+#   AZURE_SECRET          -> valore del client secret
+#   AZURE_TENANT_URL      -> https://login.microsoftonline.com/<TENANT_ID>/v2.0
+#                            (usare "common" solo per tenant multipli)
+# ---------------------------------------------------------------------------
+[auth.external.azure]
+enabled = true
+client_id = "env(AZURE_CLIENT_ID)"
+secret = "env(AZURE_SECRET)"
+url = "env(AZURE_TENANT_URL)"
+redirect_uri = "http://localhost:54321/auth/v1/callback"
+# Fondamentale: consente il collegamento automatico dell'identita' Microsoft a
+# un utente gia' creato dall'HR con lo stesso indirizzo email verificato.
+skip_nonce_check = false
+
+[edge_runtime]
+enabled = true
+policy = "oneshot"
+inspector_port = 8083
+
+[functions.admin-users]
+verify_jwt = true
+
+[functions.submit-satisfaction]
+verify_jwt = true
+
+[functions.submit-evaluation]
+verify_jwt = true
+
+[functions.manage-campaign]
+verify_jwt = true
