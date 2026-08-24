@@ -348,6 +348,15 @@ function EvaluationTable({
                         value={Math.min(evaluation.overall_score, 100)}
                         sx={{ height: 5, borderRadius: 3 }}
                       />
+                      {/* Se la scheda e' stata corretta, il punteggio di
+                          partenza resta visibile accanto a quello attuale. */}
+                      {evaluation.original_score !== null &&
+                        evaluation.original_score !== undefined && (
+                        <Typography variant="caption" color="text.secondary">
+                          prima della correzione:{" "}
+                          {formatScore(evaluation.original_score)}
+                        </Typography>
+                      )}
                     </Stack>
                   )}
               </TableCell>

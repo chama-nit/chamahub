@@ -61,9 +61,17 @@ const SELECT =
 export default function RequestsPage() {
   const router = useRouter();
   const { profile } = useAuth();
-  const canReceive = profile?.role === "manager" || profile?.role === "hr";
+  const canReceive = profile?.role === "manager" || profile?.role === "hr" ||
+    profile?.role === "sysadmin";
 
-  const [tab, setTab] = useState<"sent" | "received">("sent");
+  // L'HR e' il destinatario delle richieste, non un mittente: una richiesta
+  // dell'HR all'HR non avrebbe nessuno a cui arrivare. Lo stesso divieto e'
+  // scritto nelle policy RLS, cosi' non dipende dall'interfaccia.
+  const canCompose = profile?.role !== "hr" && profile?.role !== "sysadmin";
+
+  const [tab, setTab] = useState<"sent" | "received">(
+    canCompose ? "sent" : "received",
+  );
   const [statusFilter, setStatusFilter] = useState<RequestStatus | "all">("all");
   const [composerOpen, setComposerOpen] = useState(false);
 
@@ -77,7 +85,7 @@ export default function RequestsPage() {
       // Le richieste ricevute sono quelle indirizzate al proprio ruolo e non
       // inviate da se stessi.
       query = query
-        .eq("recipient", profile!.role === "hr" ? "hr" : "manager")
+        .eq("recipient", profile!.role === "manager" ? "manager" : "hr")
         .neq("requester_id", profile!.id);
     }
 
@@ -98,16 +106,20 @@ export default function RequestsPage() {
     <>
       <PageHeader
         title="Richieste"
-        description="Invia una richiesta al tuo responsabile o al reparto HR e segui la conversazione fino alla chiusura."
-        actions={
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setComposerOpen(true)}
-          >
-            Nuova richiesta
-          </Button>
-        }
+        description={canCompose
+          ? "Invia una richiesta al tuo responsabile o al reparto HR e segui la conversazione fino alla chiusura."
+          : "Le richieste che i dipendenti hanno indirizzato al reparto HR, dalla presa in carico alla chiusura."}
+        actions={canCompose
+          ? (
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => setComposerOpen(true)}
+            >
+              Nuova richiesta
+            </Button>
+          )
+          : undefined}
       />
 
       <Card>
@@ -117,12 +129,13 @@ export default function RequestsPage() {
             onChange={(_event, value) => setTab(value as "sent" | "received")}
             sx={{ px: 2, borderBottom: "1px solid", borderColor: "divider" }}
           >
-            <Tab value="sent" label="Le mie richieste" />
+            {/* Chi non puo' inviare richieste non ha una scheda "le mie". */}
+            {canCompose && <Tab value="sent" label="Le mie richieste" />}
             <Tab
               value="received"
-              label={profile?.role === "hr"
-                ? "Ricevute dall'HR"
-                : "Ricevute dalla mia area"}
+              label={profile?.role === "manager"
+                ? "Ricevute dalla mia area"
+                : "Ricevute dall'HR"}
             />
           </Tabs>
         )}
@@ -165,7 +178,7 @@ export default function RequestsPage() {
                     : "Nessuna richiesta ricevuta"}
                   description={tab === "sent"
                     ? "Usa il pulsante in alto a destra per inviare la prima."
-                    : "Quando qualcuno ti scrivera', la richiesta comparira' qui."}
+                    : "Quando qualcuno scrivera' al reparto, la richiesta comparira' qui."}
                 />
               </CardContent>
             )
@@ -245,7 +258,7 @@ export default function RequestsPage() {
       </Card>
 
       <ComposerDialog
-        open={composerOpen}
+        open={composerOpen && canCompose}
         onClose={() => setComposerOpen(false)}
         onCreated={() => {
           setTab("sent");

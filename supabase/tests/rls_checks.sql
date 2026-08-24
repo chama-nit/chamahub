@@ -41,7 +41,8 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('22222222-2222-2222-2222-222222222222', 'mgr@example.com',  '{"full_name":"Marco Gestori"}'),
   ('33333333-3333-3333-3333-333333333333', 'emp1@example.com', '{"full_name":"Elisa Uno"}'),
   ('44444444-4444-4444-4444-444444444444', 'emp2@example.com', '{"full_name":"Enrico Due"}'),
-  ('55555555-5555-5555-5555-555555555555', 'new@example.com',  '{"full_name":"Nuovo Arrivato"}');
+  ('55555555-5555-5555-5555-555555555555', 'new@example.com',  '{"full_name":"Nuovo Arrivato"}'),
+  ('66666666-6666-6666-6666-666666666666', 'root@example.com', '{"full_name":"Sara Sistemi"}');
 
 insert into public.areas (id, name) values
   ('aaaaaaaa-0000-0000-0000-000000000001', 'Sviluppo'),
@@ -58,6 +59,8 @@ update public.profiles set is_active = true,
 update public.profiles set is_active = true,
   area_id = 'aaaaaaaa-0000-0000-0000-000000000002'
   where id = '44444444-4444-4444-4444-444444444444';
+update public.profiles set role = 'sysadmin', is_active = true
+  where id = '66666666-6666-6666-6666-666666666666';
 -- '55555555' resta is_active = false: simula il primo accesso Microsoft di
 -- una persona non ancora censita dall'HR.
 
@@ -261,6 +264,33 @@ begin;
   select pg_temp.assert(
     (select count(*) from public.requests) = 2,
     'richieste: l''HR vede tutte le richieste');
+
+  -- L'HR e' il destinatario delle richieste, non un mittente: una richiesta
+  -- dell'HR all'HR arriverebbe a se' stessa.
+  select pg_temp.expect_error(
+    $q$insert into public.requests (requester_id, recipient, category, subject, body)
+       values ('11111111-1111-1111-1111-111111111111', 'hr', 'other',
+               'Prova', 'Non deve passare')$q$,
+    'richieste: l''HR non puo'' aprire una richiesta all''HR');
+
+  select pg_temp.expect_error(
+    $q$insert into public.requests (requester_id, recipient, category, subject, body)
+       values ('11111111-1111-1111-1111-111111111111', 'manager', 'other',
+               'Prova', 'Non deve passare')$q$,
+    'richieste: l''HR non puo'' aprire una richiesta al responsabile');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+  -- Il divieto riguarda solo l'HR: per gli altri nulla e' cambiato.
+  insert into public.requests (requester_id, recipient, category, subject, body)
+  values ('33333333-3333-3333-3333-333333333333', 'hr', 'training',
+          'Corso di aggiornamento', 'Vorrei partecipare al corso di ottobre.');
+  select pg_temp.assert(
+    (select count(*) from public.requests
+      where requester_id = '33333333-3333-3333-3333-333333333333') = 3,
+    'richieste: un dipendente continua a poterne aprire');
 commit;
 
 -- ===========================================================================
@@ -442,10 +472,6 @@ begin;
     'dashboard: un account non attivato riceve active = false');
 commit;
 
-\echo ''
-\echo '================================================='
-\echo ' Tutti i controlli RLS sono stati superati.'
-\echo '================================================='
 
 -- ===========================================================================
 -- 7. Autovalutazione del dipendente, correggibile dal responsabile
@@ -549,3 +575,193 @@ begin;
       where id = 'dddddddd-0000-0000-0000-000000000002') = 0,
     'autovalutazione: un collega della stessa area non la vede');
 commit;
+
+-- ===========================================================================
+-- 7. Campagne: modifica e cancellazione solo in bozza
+-- ===========================================================================
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+  insert into public.evaluation_campaigns (id, name, template_id, ends_on, status)
+  select 'cccccccc-0000-0000-0000-000000000002',
+         'Bozza da modificare',
+         t.id,
+         current_date + 30,
+         'draft'
+  from public.evaluation_templates t where t.target = 'employee' limit 1;
+
+  update public.evaluation_campaigns
+  set name = 'Bozza rinominata', ends_on = current_date + 45
+  where id = 'cccccccc-0000-0000-0000-000000000002';
+
+  select pg_temp.assert(
+    (select name from public.evaluation_campaigns
+      where id = 'cccccccc-0000-0000-0000-000000000002') = 'Bozza rinominata',
+    'campagne: una bozza si modifica');
+
+  select pg_temp.expect_error(
+    $q$update public.evaluation_campaigns set status = 'open'
+       where id = 'cccccccc-0000-0000-0000-000000000002'$q$,
+    'campagne: lo stato non si cambia a mano dal client');
+
+  delete from public.evaluation_campaigns
+  where id = 'cccccccc-0000-0000-0000-000000000002';
+
+  select pg_temp.assert(
+    (select count(*) from public.evaluation_campaigns
+      where id = 'cccccccc-0000-0000-0000-000000000002') = 0,
+    'campagne: una bozza si cancella');
+commit;
+
+-- La campagna 'cccccccc-0000-0000-0000-000000000001' e' stata aperta dai
+-- controlli precedenti: da qui in poi e' intoccabile.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+  select pg_temp.expect_error(
+    $q$update public.evaluation_campaigns set name = 'Cambio proibito'
+       where id = 'cccccccc-0000-0000-0000-000000000001'$q$,
+    'campagne: una campagna aperta non si modifica');
+
+  select pg_temp.expect_error(
+    $q$delete from public.evaluation_campaigns
+       where id = 'cccccccc-0000-0000-0000-000000000001'$q$,
+    'campagne: una campagna aperta non si cancella');
+commit;
+
+-- ===========================================================================
+-- 8. SystemAdmin
+-- ===========================================================================
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '66666666-6666-6666-6666-666666666666';
+
+  select pg_temp.assert(
+    public.is_sysadmin() and public.is_hr(),
+    'sysadmin: eredita i permessi dell''HR');
+
+  select pg_temp.assert(
+    (select count(*) from public.profiles) >= 6,
+    'sysadmin: vede tutta l''anagrafica');
+
+  select pg_temp.expect_error(
+    $q$update public.profiles set role = 'employee'
+       where id = '66666666-6666-6666-6666-666666666666'$q$,
+    'sysadmin: non puo'' togliersi il ruolo da solo');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+  select pg_temp.expect_error(
+    $q$update public.profiles set role = 'sysadmin'
+       where id = '33333333-3333-3333-3333-333333333333'$q$,
+    'sysadmin: l''HR non puo'' nominarne uno');
+
+  select pg_temp.expect_error(
+    $q$update public.profiles set is_active = false
+       where id = '66666666-6666-6666-6666-666666666666'$q$,
+    'sysadmin: l''HR non puo'' disattivarlo');
+commit;
+
+-- Il registro delle impersonificazioni e' riservato al sysadmin.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+  select pg_temp.assert(
+    (select count(*) from public.impersonation_log) = 0,
+    'sysadmin: il registro non e'' leggibile dall''HR');
+commit;
+
+-- Richieste: nemmeno il sysadmin ne apre.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '66666666-6666-6666-6666-666666666666';
+  select pg_temp.expect_error(
+    $q$insert into public.requests (requester_id, recipient, category, subject, body)
+       values ('66666666-6666-6666-6666-666666666666', 'hr', 'other',
+               'Prova', 'Non deve passare')$q$,
+    'richieste: il sysadmin non puo'' aprirne');
+commit;
+
+-- ===========================================================================
+-- 9. Punteggio prima e dopo la correzione
+-- ===========================================================================
+-- La scheda viene consegnata con risposte basse, poi il responsabile le alza:
+-- il punteggio attuale deve salire e quello originale restare fermo.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+  insert into public.evaluations
+    (id, campaign_id, template_id, subject_id, evaluator_id, area_id, kind)
+  select 'dddddddd-0000-0000-0000-000000000003',
+         'cccccccc-0000-0000-0000-000000000001',
+         t.id,
+         '44444444-4444-4444-4444-444444444444',
+         '44444444-4444-4444-4444-444444444444',
+         'aaaaaaaa-0000-0000-0000-000000000001',
+         'self_assessment'
+  from public.evaluation_templates t where t.target = 'self' limit 1;
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '44444444-4444-4444-4444-444444444444';
+  insert into public.evaluation_answers (evaluation_id, question_id, numeric_value)
+  select 'dddddddd-0000-0000-0000-000000000003', q.id, q.scale_min
+  from public.evaluation_questions q
+  join public.evaluations e on e.id = 'dddddddd-0000-0000-0000-000000000003'
+  where q.template_id = e.template_id and q.type = 'scale';
+commit;
+
+-- Consegna: la fa la Edge Function con service_role, qui si riproduce lo
+-- stesso contesto (nessun auth.uid()).
+begin;
+  reset role;
+  update public.evaluations
+  set status = 'submitted',
+      submitted_at = now(),
+      overall_score = public.evaluation_score('dddddddd-0000-0000-0000-000000000003')
+  where id = 'dddddddd-0000-0000-0000-000000000003';
+
+  select pg_temp.assert(
+    (select overall_score from public.evaluations
+      where id = 'dddddddd-0000-0000-0000-000000000003') = 0,
+    'punteggio: risposte al minimo della scala valgono zero');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+  update public.evaluation_answers a
+  set numeric_value = q.scale_max
+  from public.evaluation_questions q
+  where q.id = a.question_id
+    and a.evaluation_id = 'dddddddd-0000-0000-0000-000000000003';
+
+  select pg_temp.assert(
+    (select original_score from public.evaluations
+      where id = 'dddddddd-0000-0000-0000-000000000003') = 0,
+    'punteggio: la correzione conserva quello originale');
+
+  select pg_temp.assert(
+    (select overall_score from public.evaluations
+      where id = 'dddddddd-0000-0000-0000-000000000003') = 100,
+    'punteggio: la correzione ricalcola quello attuale');
+
+  select pg_temp.assert(
+    (select corrected_by from public.evaluations
+      where id = 'dddddddd-0000-0000-0000-000000000003')
+      = '22222222-2222-2222-2222-222222222222',
+    'punteggio: resta registrato chi ha corretto');
+commit;
+
+\echo ''
+\echo '================================================='
+\echo ' Tutti i controlli RLS sono stati superati.'
+\echo '================================================='

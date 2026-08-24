@@ -13,7 +13,6 @@
 import { useMemo, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
@@ -31,11 +30,10 @@ import Typography from "@mui/material/Typography";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
 import LockIcon from "@mui/icons-material/Lock";
-import TableChartIcon from "@mui/icons-material/TableChart";
 import WarningIcon from "@mui/icons-material/Warning";
 
 import PageHeader from "@/components/PageHeader";
-import { HorizontalBars, TrendLine } from "@/components/charts";
+import { HorizontalBars, TrendLine, type TrendSeries } from "@/components/charts";
 import { AsyncBlock, AutoGrid, StatCard } from "@/components/ui";
 import SortableGrid, { type GridBlock } from "@/components/SortableGrid";
 import { useAsync } from "@/lib/hooks";
@@ -85,11 +83,15 @@ function ScoreBadge({ value }: { value: number | null }) {
     return <Chip size="small" variant="outlined" label="Dato non disponibile" />;
   }
 
+  // I colori arrivano dal tema (success / warning / error) invece che da
+  // valori scritti a mano: cosi' seguono la tavolozza e restano leggibili in
+  // entrambi i temi. Il colore non e' mai solo: accanto c'e' sempre icona ed
+  // etichetta.
   const config = value >= 70
-    ? { color: "#0ca30c", label: "Positivo", Icon: CheckCircleIcon }
+    ? { color: "success.main", label: "Positivo", Icon: CheckCircleIcon }
     : value >= 50
-    ? { color: "#fab219", label: "Da monitorare", Icon: WarningIcon }
-    : { color: "#d03b3b", label: "Critico", Icon: ErrorIcon };
+    ? { color: "warning.main", label: "Da monitorare", Icon: WarningIcon }
+    : { color: "error.main", label: "Critico", Icon: ErrorIcon };
 
   return (
     <Chip
@@ -97,7 +99,7 @@ function ScoreBadge({ value }: { value: number | null }) {
       icon={<config.Icon sx={{ color: `${config.color} !important` }} />}
       label={config.label}
       variant="outlined"
-      sx={{ borderColor: config.color }}
+      sx={{ borderColor: config.color, color: config.color }}
     />
   );
 }
@@ -105,7 +107,6 @@ function ScoreBadge({ value }: { value: number | null }) {
 export default function HrKpiPage() {
   const [months, setMonths] = useState(12);
   const [areaFilter, setAreaFilter] = useState<string>("all");
-  const [showTable, setShowTable] = useState(false);
 
   const from = monthsAgo(months);
   const to = currentMonth();
@@ -193,34 +194,86 @@ export default function HrKpiPage() {
     [data],
   );
 
-  // Le serie mensili arrivano per (mese, area): si aggregano pesando sul
-  // numero di risposte, cosi' un'area piccola non sposta la media generale.
-  const trendPoints = useMemo(() => {
-    const byMonth = new Map<string, { sum: number; weight: number }>();
-    for (const point of data?.trend ?? []) {
-      if (point.avg_percentage === null) continue;
-      const current = byMonth.get(point.period_month) ?? { sum: 0, weight: 0 };
-      current.sum += point.avg_percentage * Number(point.responses);
-      current.weight += Number(point.responses);
-      byMonth.set(point.period_month, current);
-    }
-
-    // Serie completa: i mesi senza dati restano nulli e interrompono la linea.
-    const result: { label: string; value: number | null; hint?: string }[] = [];
+  // Andamento nel tempo: una serie per area, piu' la media aziendale.
+  // -------------------------------------------------------------------------
+  // La funzione SQL restituisce una riga per (mese, area) e applica gia' la
+  // soglia di riservatezza: dove le risposte non bastano il valore e' nullo, e
+  // la linea si interrompe invece di mostrare un dato che non deve uscire.
+  const trend = useMemo(() => {
+    // Asse dei mesi: costruito per intero, cosi' i buchi restano visibili.
+    const axis: { key: string; label: string }[] = [];
     const now = new Date();
     for (let index = months - 1; index >= 0; index -= 1) {
       const date = new Date(now.getFullYear(), now.getMonth() - index, 1);
-      const key = `${date.getFullYear()}-${
-        String(date.getMonth() + 1).padStart(2, "0")
-      }-01`;
-      const entry = byMonth.get(key);
-      result.push({
+      axis.push({
+        key: `${date.getFullYear()}-${
+          String(date.getMonth() + 1).padStart(2, "0")
+        }-01`,
         label: MONTH_FORMATTER.format(date),
-        value: entry ? Math.round((entry.sum / entry.weight) * 10) / 10 : null,
-        hint: entry ? `${entry.weight} risposte` : undefined,
       });
     }
-    return result;
+
+    const rows = data?.trend ?? [];
+    const areaName = new Map(
+      (data?.areas ?? []).map((area) => [area.id, area.name]),
+    );
+    const areaColor = new Map(
+      (data?.areas ?? []).map((area) => [area.id, area.color]),
+    );
+
+    // Valori per area e per mese.
+    const byArea = new Map<string, Map<string, number>>();
+    // Media aziendale: somma pesata sul numero di risposte, cosi' un'area
+    // piccola non sposta il riferimento generale.
+    const company = new Map<string, { sum: number; weight: number }>();
+
+    for (const row of rows) {
+      if (row.avg_percentage === null) continue;
+      const key = row.area_id ?? "senza-area";
+      const monthKey = String(row.period_month).slice(0, 10);
+
+      const bucket = byArea.get(key) ?? new Map<string, number>();
+      bucket.set(monthKey, Number(row.avg_percentage));
+      byArea.set(key, bucket);
+
+      const total = company.get(monthKey) ?? { sum: 0, weight: 0 };
+      total.sum += Number(row.avg_percentage) * Number(row.responses);
+      total.weight += Number(row.responses);
+      company.set(monthKey, total);
+    }
+
+    const series: TrendSeries[] = [...byArea.entries()]
+      .map(([key, values]) => ({
+        key,
+        label: key === "senza-area"
+          ? "Senza area"
+          : areaName.get(key) ?? "Area rimossa",
+        color: areaColor.get(key) ?? "#8a8f98",
+        points: axis.map((month) => values.get(month.key) ?? null),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, "it"));
+
+    // La media aziendale ha senso solo se ci sono piu' aree da confrontare.
+    if (series.length > 1) {
+      series.push({
+        key: "media-aziendale",
+        label: "Media aziendale",
+        color: "#8a8f98",
+        reference: true,
+        points: axis.map((month) => {
+          const total = company.get(month.key);
+          return total && total.weight > 0
+            ? Math.round((total.sum / total.weight) * 10) / 10
+            : null;
+        }),
+        hints: axis.map((month) => {
+          const total = company.get(month.key);
+          return total ? `${total.weight} risposte in tutto` : undefined;
+        }),
+      });
+    }
+
+    return { labels: axis.map((month) => month.label), series };
   }, [data, months]);
 
   const questionBars = useMemo(
@@ -255,10 +308,10 @@ export default function HrKpiPage() {
         key: "andamento",
         title: "Andamento nel tempo",
         subtitle: areaFilter === "all"
-          ? "Media aziendale mese per mese."
-          : "Media dell'area selezionata mese per mese.",
+          ? "Una linea per area, nel colore dell'area, piu' la media aziendale."
+          : "Andamento mese per mese dell'area selezionata.",
         span: "half",
-        children: <TrendLine points={trendPoints} />,
+        children: <TrendLine labels={trend.labels} series={trend.series} />,
       },
       {
         key: "per-domanda",
@@ -307,10 +360,11 @@ export default function HrKpiPage() {
             </Box>
           ),
       },
-    ];
-
-    if (showTable) {
-      blocks.push({
+      {
+        // La tabella e' sempre presente: e' la versione dei dati leggibile da
+        // uno screen reader e l'unica da cui si copiano i numeri. Se non
+        // interessa si sposta in fondo o si restringe, come ogni altro
+        // riquadro.
         key: "tabella",
         title: "Vista tabellare",
         subtitle: "Gli stessi dati in forma leggibile da uno screen reader.",
@@ -347,25 +401,17 @@ export default function HrKpiPage() {
             </Table>
           </TableContainer>
         ),
-      });
-    }
+      },
+    ];
 
     return blocks;
-  }, [areaBars, trendPoints, questionBars, data, areaFilter, showTable]);
+  }, [areaBars, trend, questionBars, data, areaFilter]);
 
   return (
     <>
       <PageHeader
         title="Dashboard KPI"
         description="Il polso delle aree, ricostruito dalle schede di gradimento compilate in forma anonima dai dipendenti."
-        actions={
-          <Button
-            startIcon={<TableChartIcon />}
-            onClick={() => setShowTable((value) => !value)}
-          >
-            {showTable ? "Nascondi tabella" : "Vista tabellare"}
-          </Button>
-        }
       />
 
       <Stack spacing={3}>

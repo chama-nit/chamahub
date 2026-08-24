@@ -49,7 +49,10 @@ import PollIcon from "@mui/icons-material/Poll";
 import QuestionAnswerIcon from "@mui/icons-material/QuestionAnswer";
 import SpaceDashboardIcon from "@mui/icons-material/SpaceDashboard";
 import SentimentSatisfiedAltIcon from "@mui/icons-material/SentimentSatisfiedAlt";
+import ShieldIcon from "@mui/icons-material/Shield";
 
+import ImpersonationBanner from "@/components/ImpersonationBanner";
+import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { ROLE_LABELS } from "@/lib/labels";
 import { initials } from "@/lib/format";
@@ -69,7 +72,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const ALL: UserRole[] = ["employee", "manager", "hr"];
+const ALL: UserRole[] = ["employee", "manager", "hr", "sysadmin"];
 
 const SECTIONS: NavSection[] = [
   {
@@ -102,7 +105,7 @@ const SECTIONS: NavSection[] = [
         href: "/gradimento",
         label: "Gradimento",
         icon: <SentimentSatisfiedAltIcon />,
-        roles: ["employee", "manager"],
+        roles: ["employee", "manager", "sysadmin"],
       },
     ],
   },
@@ -113,7 +116,7 @@ const SECTIONS: NavSection[] = [
         href: "/area",
         label: "Team e calendario",
         icon: <GroupsIcon />,
-        roles: ["manager"],
+        roles: ["manager", "sysadmin"],
       },
     ],
   },
@@ -124,49 +127,60 @@ const SECTIONS: NavSection[] = [
         href: "/hr/dipendenti",
         label: "Dipendenti",
         icon: <PeopleIcon />,
-        roles: ["hr"],
+        roles: ["hr", "sysadmin"],
       },
       {
         href: "/hr/aree",
         label: "Aree",
         icon: <BusinessIcon />,
-        roles: ["hr"],
+        roles: ["hr", "sysadmin"],
       },
       {
         href: "/hr/calendario",
         label: "Calendario aziendale",
         icon: <EventNoteIcon />,
-        roles: ["hr"],
+        roles: ["hr", "sysadmin"],
       },
       {
         href: "/hr/modelli",
         label: "Modelli di scheda",
         icon: <DescriptionIcon />,
-        roles: ["hr"],
+        roles: ["hr", "sysadmin"],
       },
       {
         href: "/hr/campagne",
         label: "Campagne",
         icon: <PollIcon />,
-        roles: ["hr"],
+        roles: ["hr", "sysadmin"],
       },
       {
         href: "/hr/valutazioni",
         label: "Tutte le valutazioni",
         icon: <FactCheckIcon />,
-        roles: ["hr"],
+        roles: ["hr", "sysadmin"],
       },
       {
         href: "/hr/questionari",
         label: "Questionari gradimento",
         icon: <SentimentSatisfiedAltIcon />,
-        roles: ["hr"],
+        roles: ["hr", "sysadmin"],
       },
       {
         href: "/hr/kpi",
         label: "Dashboard KPI",
         icon: <InsightsIcon />,
-        roles: ["hr"],
+        roles: ["hr", "sysadmin"],
+      },
+    ],
+  },
+  {
+    title: "Sistema",
+    items: [
+      {
+        href: "/sistema",
+        label: "Pannello di sistema",
+        icon: <ShieldIcon />,
+        roles: ["sysadmin"],
       },
     ],
   },
@@ -306,10 +320,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <Box sx={{ flex: 1 }} />
 
           <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+            <ThemeToggle />
             <Chip
               size="small"
               label={ROLE_LABELS[role]}
-              color={role === "hr"
+              color={role === "sysadmin"
+                ? "error"
+                : role === "hr"
                 ? "primary"
                 : role === "manager"
                 ? "secondary"
@@ -395,6 +412,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         }}
       >
         <Toolbar />
+        <ImpersonationBanner />
         <Box sx={{ p: { xs: 2, md: 3 } }}>{children}</Box>
       </Box>
     </Box>

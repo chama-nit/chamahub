@@ -33,7 +33,7 @@ interface Payload {
 interface ProfileRow {
   id: string;
   full_name: string;
-  role: "employee" | "manager" | "hr";
+  role: "employee" | "manager" | "hr" | "sysadmin";
   area_id: string | null;
   created_at: string;
 }
@@ -189,6 +189,18 @@ Deno.serve(async (req: Request) => {
           status: "pending",
         });
       }
+    }
+
+    // Nessuna scheda generata e nessuna gia' esistente: succede quando le aree
+    // coinvolte non hanno dipendenti da valutare e l'autovalutazione non e'
+    // prevista. E' meglio dirlo che lasciare una campagna aperta e vuota, con
+    // un "0 / 0" che sembra un guasto.
+    if (toInsert.length === 0 && already.size === 0) {
+      warnings.push(
+        campaign.include_self_assessment
+          ? "Nessuna scheda da generare: le aree coinvolte non hanno persone attive."
+          : "Nessuna scheda da generare: le aree coinvolte non hanno dipendenti con un responsabile, e l'autovalutazione non e' prevista per questa campagna.",
+      );
     }
 
     if (toInsert.length > 0) {

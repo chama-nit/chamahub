@@ -19,7 +19,15 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   employee: "Dipendente",
   manager: "Responsabile",
   hr: "HR",
+  sysadmin: "SystemAdmin",
 };
+
+/**
+ * I ruoli che l'HR puo' assegnare dall'interfaccia. `sysadmin` resta fuori: si
+ * ottiene solo dal database (supabase/scripts/03_crea_systemadmin.sql), e la
+ * Edge Function `admin-users` rifiuta comunque di assegnarlo.
+ */
+export const ASSIGNABLE_ROLES: UserRole[] = ["employee", "manager", "hr"];
 
 export const ATTENDANCE_LABELS: Record<AttendanceType, string> = {
   office: "In ufficio",
@@ -27,10 +35,20 @@ export const ATTENDANCE_LABELS: Record<AttendanceType, string> = {
   absence: "Assenza",
 };
 
+// I valori veri stanno in app/globals.css, definiti due volte: una per il tema
+// chiaro e una per quello scuro. Qui restano solo i riferimenti, cosi' lo
+// stesso codice serve entrambi i temi senza sapere quale sia attivo.
 export const ATTENDANCE_COLORS: Record<AttendanceType, string> = {
-  office: "#2e7d32",
-  smart_working: "#0288d1",
-  absence: "#ed6c02",
+  office: "var(--att-office)",
+  smart_working: "var(--att-smart)",
+  absence: "var(--att-absence)",
+};
+
+/** Lo stesso colore quasi trasparente, per i fondi delle pastiglie. */
+export const ATTENDANCE_SOFT_COLORS: Record<AttendanceType, string> = {
+  office: "var(--att-office-soft)",
+  smart_working: "var(--att-smart-soft)",
+  absence: "var(--att-absence-soft)",
 };
 
 export const ABSENCE_LABELS: Record<AbsenceKind, string> = {

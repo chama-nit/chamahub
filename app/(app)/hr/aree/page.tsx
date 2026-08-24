@@ -39,18 +39,14 @@ import { AsyncBlock, AutoGrid, EmptyState } from "@/components/ui";
 import { useToast } from "@/components/ToastProvider";
 import { useAsync } from "@/lib/hooks";
 import { getSupabase } from "@/lib/supabase/client";
+import { AREA_PALETTE } from "@/lib/chart-colors";
 import type { AreaOverview } from "@/lib/types/models";
 
-const PALETTE = [
-  "#1f4e79",
-  "#00897b",
-  "#6a1b9a",
-  "#c62828",
-  "#ef6c00",
-  "#2e7d32",
-  "#0277bd",
-  "#4e342e",
-];
+// La tavolozza vive in lib/chart-colors: gli stessi colori servono ai grafici,
+// dove devono restare distinguibili l'uno dall'altro e leggibili su entrambi i
+// temi. Averne una copia qui significherebbe vederle divergere alla prima
+// modifica.
+const PALETTE = AREA_PALETTE;
 
 interface EditorState {
   id?: string;

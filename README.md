@@ -24,11 +24,13 @@ comportamento sensibile e' delegato a Supabase, in due modi complementari:
 4. [Configurazione di Supabase](#configurazione-di-supabase)
 5. [Accesso con Microsoft Entra ID](#accesso-con-microsoft-entra-id)
 6. [Creare il primo utente HR](#creare-il-primo-utente-hr)
-7. [Struttura del progetto](#struttura-del-progetto)
-8. [Modello di sicurezza](#modello-di-sicurezza)
-9. [Anonimato del gradimento](#anonimato-del-gradimento)
-10. [Collaudo delle policy](#collaudo-delle-policy)
-11. [Scelte progettuali e limiti noti](#scelte-progettuali-e-limiti-noti)
+7. [Nominare un SystemAdmin](#nominare-un-systemadmin)
+8. [Struttura del progetto](#struttura-del-progetto)
+9. [Tema chiaro e scuro](#tema-chiaro-e-scuro)
+10. [Modello di sicurezza](#modello-di-sicurezza)
+11. [Anonimato del gradimento](#anonimato-del-gradimento)
+12. [Collaudo delle policy](#collaudo-delle-policy)
+13. [Scelte progettuali e limiti noti](#scelte-progettuali-e-limiti-noti)
 
 ---
 
@@ -41,6 +43,7 @@ comportamento sensibile e' delegato a Supabase, in due modi complementari:
 | Linguaggio | TypeScript in modalita' `strict` |
 | Backend | Supabase (PostgreSQL + Auth + Edge Function su Deno) |
 | Grafici | SVG scritto a mano, nessuna libreria di charting |
+| Temi | chiaro e scuro (predefinito lo scuro), su variabili CSS |
 
 Non ci sono API route, Server Action o componenti server con logica: il server
 Next.js si limita a servire l'applicazione.
@@ -84,19 +87,47 @@ Tutto quanto sopra, piu':
   reimpostazione password da consegnare a mano.
 * Gestione delle aree aziendali.
 * Calendario dell'intera azienda, filtrabile per area e per dipendente.
-* Visione di tutte le richieste, comprese quelle indirizzate ai responsabili.
+* Lettura e gestione di tutte le richieste, comprese quelle indirizzate ai
+  responsabili. L'HR non ne apre: e' il destinatario, non un mittente, e una
+  richiesta dell'HR all'HR non avrebbe nessuno a cui arrivare (il divieto e'
+  scritto nelle policy, non solo nell'interfaccia).
 * Costruttore di modelli di scheda (domande a scala numerica e a testo libero,
   con peso e obbligatorieta').
-* Campagne di valutazione: apertura, sincronizzazione, chiusura, avanzamento per
-  area. All'apertura viene generata un'autovalutazione per ogni persona
-  coinvolta, non solo per i responsabili.
+* Campagne di valutazione: creazione, modifica ed eliminazione **finche' sono
+  in bozza**, poi apertura, sincronizzazione, chiusura e avanzamento per area.
+  Una campagna in bozza mostra quante schede genererebbe all'apertura, cosi' si
+  vede subito se le aree scelte producono qualcosa. All'apertura viene generata
+  un'autovalutazione per ogni persona coinvolta, non solo per i responsabili.
 * Elenco di tutte le valutazioni dell'azienda (pagina "Tutte le valutazioni"),
   raggruppabili per area o per persona e filtrabili per campagna, tipo di
   scheda e stato.
 * Questionari di gradimento e dashboard KPI con medie per area, andamento
-  mensile, dettaglio per domanda e commenti anonimi. I riquadri della
-  dashboard si riordinano per trascinamento (o con le frecce) e si allargano a
-  mezza o intera larghezza; la disposizione resta salvata sul browser.
+  mensile **con una linea per area** (nel colore dell'area, piu' la media
+  aziendale tratteggiata come riferimento), dettaglio per domanda, commenti
+  anonimi e tabella riepilogativa
+  (sempre presente: e' la versione leggibile da uno screen reader). I riquadri
+  si riordinano per trascinamento o con le frecce e si allargano a mezza o
+  intera larghezza; la disposizione resta salvata sul browser.
+
+### SystemAdmin
+
+Il ruolo sopra l'HR. Serve a chi tiene in piedi l'applicazione, non a chi ci
+lavora dentro:
+
+* tutto quello che puo' fare l'HR;
+* **impersonificazione**: entra nei panni di una persona e vede l'applicazione
+  con i suoi occhi - menu, permessi e dati, perche' da quel momento le policy
+  RLS valutano il suo identificativo. Una striscia gialla sempre visibile
+  ricorda nei panni di chi si sta lavorando, e ogni ingresso resta scritto in
+  un registro consultabile solo dai SystemAdmin;
+* non apre richieste, come l'HR.
+
+**Il ruolo non si assegna dall'applicazione**, nemmeno da un altro SystemAdmin:
+si ottiene solo dal database, con `supabase/scripts/03_crea_systemadmin.sql`.
+E' voluto: un ruolo che sta sopra a tutti non deve essere raggiungibile da
+dentro, altrimenti basta un account HR compromesso per prendersi le chiavi di
+casa. Per la stessa ragione l'HR non puo' modificare ne' disattivare un profilo
+SystemAdmin.
 
 ---
 
@@ -122,7 +153,7 @@ Script disponibili:
 | `npm run lint` | ESLint |
 | `npm run db:push` | applica le migrazioni al progetto Supabase collegato |
 | `npm run db:types` | rigenera i tipi TypeScript dal database |
-| `npm run functions:deploy` | pubblica le quattro Edge Function |
+| `npm run functions:deploy` | pubblica le sei Edge Function |
 
 ---
 
@@ -156,7 +187,7 @@ supabase link --project-ref <REFERENCE_ID>
 supabase db push
 ```
 
-`db push` applica in ordine i dieci file in `supabase/migrations/`, che creano
+`db push` applica in ordine i diciassette file in `supabase/migrations/`, che creano
 tabelle, tipi, funzioni, policy RLS e i contenuti predefiniti (un modello di
 valutazione, un modello di autovalutazione e un questionario di gradimento gia'
 pronti).
@@ -168,9 +199,22 @@ supabase functions deploy admin-users
 supabase functions deploy submit-satisfaction
 supabase functions deploy submit-evaluation
 supabase functions deploy manage-campaign
+supabase functions deploy impersonate
+supabase functions deploy request-password-reset
 ```
 
 oppure, in un colpo solo, `npm run functions:deploy`.
+
+Durante il deploy la CLI stampa due avvisi che si possono ignorare:
+
+| Avviso | Perche' compare |
+|---|---|
+| `config section [inbucket] is deprecated` | vecchio nome di una sezione di `config.toml` che riguarda solo la cattura delle email in locale. Nel progetto e' gia' rinominata in `[local_smtp]`: se lo vedi ancora, hai una copia vecchia del file. |
+| `WARNING: Docker is not running` | Docker serve solo a far girare Supabase in locale (`supabase start`). La pubblicazione avviene sui server di Supabase, quindi non serve. |
+
+Alla fine devono comparire **cinque** righe `Deployed Functions on project ...`,
+una per funzione. Se `impersonate` non c'e', il Pannello di sistema risponde
+"Errore interno del server" quando prova a impersonare qualcuno.
 
 `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` vengono iniettate automaticamente
 da Supabase nell'ambiente delle funzioni: non serve configurarle. Sono
@@ -202,7 +246,7 @@ l'SMTP e' rotto falliscono solo quelle:
 | Creare un dipendente | **no, mai** |
 | Spedire l'email «imposta la password» alla creazione | si', ma e' facoltativa e il suo fallimento non blocca nulla |
 | «Genera link di reimpostazione» dalla pagina Dipendenti | no |
-| «Ho dimenticato la password» dalla pagina di login | **si'** |
+| «Ho dimenticato la password» dalla pagina di login | si', ma non blocca piu' nulla: vedi qui sotto |
 | Conferma dell'indirizzo alla registrazione | si', se le conferme sono attive |
 | Tutto il resto (calendario, richieste, valutazioni, gradimento) | no |
 
@@ -212,6 +256,11 @@ posta e non puo' fallire per colpa sua - e solo dopo, se richiesto, si tenta la
 spedizione. Se il server di posta non risponde entro 10 secondi l'operazione si
 chiude comunque con successo, mostrando la password temporanea e un avviso che
 l'email non e' partita.
+
+Per spedire dalla casella aziendale Microsoft 365 c'e' una guida dedicata:
+[`docs/email-microsoft-smtp.md`](docs/email-microsoft-smtp.md) - con l'avvertenza
+che l'autenticazione di base su SMTP AUTH verra' disattivata da Microsoft a fine
+dicembre 2026.
 
 Il servizio email integrato di Supabase non e' pensato per la produzione: manda
 **2 messaggi all'ora** e soltanto agli indirizzi dei membri del progetto — verso
@@ -225,26 +274,84 @@ indica che il server di posta non ha risposto affatto (host o porta sbagliati,
 oppure connessione bloccata), mentre un errore immediato indica di solito
 credenziali o mittente non autorizzato.
 
+### 6. «Ho dimenticato la password»
+
+Questo modulo non passa piu' dal servizio di posta di Supabase, ma dalla Edge
+Function `request-password-reset`. Il motivo e' concreto: la chiamata standard
+resta appesa finche' Supabase non riesce a spedire, e con un SMTP che non
+risponde il browser si prende un **504** senza sapere che fine abbia fatto la
+richiesta.
+
+La funzione risponde **subito** - sempre lo stesso messaggio, per qualunque
+indirizzo - e genera il link e lo spedisce in sottofondo. Il 504 sparisce per
+costruzione: nessuno aspetta piu' la posta.
+
+Come spedisce, in ordine di precedenza:
+
+```bash
+# 1. Resend (o qualunque servizio con API HTTPS analoga)
+supabase secrets set RESEND_API_KEY=re_xxx
+supabase secrets set MAIL_FROM="ChamaHub <no-reply@tuodominio.it>"
+
+# 2. oppure il server SMTP aziendale
+supabase secrets set SMTP_HOST=smtp.tuodominio.it
+supabase secrets set SMTP_PORT=587          # 465 per TLS diretto
+supabase secrets set SMTP_USER=no-reply@tuodominio.it
+supabase secrets set SMTP_PASS=********
+supabase secrets set MAIL_FROM="ChamaHub <no-reply@tuodominio.it>"
+```
+
+**Senza nessuno dei due** la funzione genera comunque il link e lo scrive nei
+log della funzione, dove lo vede solo chi amministra il progetto: il recupero
+resta possibile a mano mentre si sistema la posta. Resta valida anche la strada
+gia' presente in applicazione, che non ha mai avuto bisogno di email: l'HR apre
+la scheda del dipendente e usa **«Genera link di reimpostazione»**.
+
+Tre dettagli di sicurezza, tutti voluti:
+
+* la risposta e' **identica** per un indirizzo registrato e per uno inventato,
+  altrimenti il modulo diventerebbe un modo per scoprire chi lavora in azienda;
+* massimo **tre richieste all'ora per indirizzo**: il modulo e' raggiungibile
+  senza autenticazione, e senza limite chiunque potrebbe sommergere di email la
+  casella di un collega;
+* la funzione e' l'unica pubblicata **senza verifica del token**
+  (`verify_jwt = false` in `supabase/config.toml`), perche' chi ha perso la
+  password non ha nessuna sessione con cui presentarsi.
+
+Chi apre il link atterra direttamente sulla pagina del profilo, con la sezione
+della password in evidenza: il collegamento vale una volta sola, quindi non ha
+senso farlo passare dalla dashboard e lasciargli cercare dove si cambia.
+
+Se le email non arrivano, i log della funzione dicono esattamente a che punto
+si e' fermata: `email inviata via ...`, `invio fallito (...)` con il link
+comunque stampato, oppure `nessun servizio di posta configurato`.
+
 ---
 
 ## Accesso con Microsoft Entra ID
 
-L'SSO Microsoft e' **facoltativo**: l'applicazione funziona anche solo con email
-e password. Il pulsante «Accedi con account Microsoft» e' **nascosto per
-impostazione predefinita**, perche' senza la configurazione su Azure fallirebbe.
-Il codice resta comunque nel progetto.
-
-Quando la procedura qui sotto e' completa, per farlo comparire metti
+L'SSO Microsoft e' **attivo**: il pulsante «Accedi con account Microsoft»
+compare nella pagina di accesso. Se la registrazione su Azure non e' ancora
+pronta si nasconde mettendo
 
 ```
-NEXT_PUBLIC_MICROSOFT_LOGIN=on
+NEXT_PUBLIC_MICROSOFT_LOGIN=off
 ```
 
-in `.env.local` e riavvia (o ricostruisci) l'applicazione. Con qualsiasi altro
-valore, o senza la variabile, il pulsante non compare.
+in `.env.local` e ricostruendo l'applicazione.
 
-**La procedura completa, con schermate ed errori frequenti, sta in
-[`docs/microsoft-entra-id.md`](docs/microsoft-entra-id.md).** Qui il riassunto:
+All'accesso vengono chiesti tre soli dati - nome, cognome e indirizzo email
+(`openid profile email`) - e servono a una cosa sola: riconoscere la persona.
+**Un accesso Microsoft riuscito non basta per entrare**: se l'indirizzo non
+corrisponde a un profilo attivo di ChamaHub la sessione viene chiusa subito e
+compare l'invito a rivolgersi al reparto HR. La richiesta resta comunque
+visibile all'HR fra i profili in attesa di attivazione, quindi basta
+completarla senza ricreare nulla.
+
+**Due guide dedicate:** [`docs/supabase-auth.md`](docs/supabase-auth.md) per la
+configurazione lato Supabase (provider, URL di ritorno, sessioni) e
+[`docs/microsoft-entra-id.md`](docs/microsoft-entra-id.md) per la registrazione
+su Azure. Qui il riassunto:
 
 ### Lato Azure
 
@@ -335,6 +442,31 @@ Se l'account esiste gia' e ti serve solo dargli il ruolo HR, usa
 
 ---
 
+## Nominare un SystemAdmin
+
+Il SystemAdmin non si crea dall'applicazione. Serve un account gia' esistente -
+creato dall'HR oppure registrato al primo accesso - e poi una riga di SQL:
+
+```sql
+update public.profiles
+set role = 'sysadmin', is_active = true
+where lower(email) = lower('tua.email@azienda.it');
+```
+
+Lo script pronto, con le verifiche e il comando di revoca, sta in
+`supabase/scripts/03_crea_systemadmin.sql`.
+
+Da quel momento la persona vede tutte le sezioni piu' il **Pannello di
+sistema**, da cui puo' entrare nei panni di chiunque non sia a sua volta
+SystemAdmin. L'uscita avviene dalla striscia gialla in cima alla pagina; se il
+browser viene chiuso a meta', alla riapertura la striscia e' ancora li'.
+
+> Il ritorno nei propri panni si appoggia alla sessione salvata nel browser. Se
+> quella sessione scade nel frattempo, l'applicazione riporta alla pagina di
+> accesso: nessun blocco, solo un accesso da rifare.
+
+---
+
 ## Struttura del progetto
 
 ```
@@ -363,8 +495,8 @@ lib/
 docs/
   microsoft-entra-id.md   guida completa all'SSO Microsoft
 supabase/
-  migrations/             10 file, da applicare in ordine
-  functions/              4 Edge Function + codice condiviso
+  migrations/             17 file, da applicare in ordine
+  functions/              6 Edge Function + codice condiviso
   scripts/                creazione dell'admin, promozione a HR
   tests/                  collaudo delle policy RLS e del primo avvio
 ```
@@ -383,6 +515,13 @@ supabase/
 | `..._default_content.sql` | modelli e questionario predefiniti |
 | `..._bootstrap_first_admin.sql` | finestra di primo avvio e promozione del primo account |
 | `..._self_assessment_for_all.sql` | autovalutazione per tutti e correzione tracciata da parte del responsabile d'area |
+| `..._hr_cannot_open_requests.sql` | il ruolo HR non puo' aprire richieste |
+| `..._campaign_draft_guard.sql` | campagne modificabili e cancellabili solo in bozza |
+| `..._correction_scores.sql` | punteggio prima e dopo la correzione, ricalcolato dal database |
+| `..._sysadmin_role_value.sql` | il valore `sysadmin` nell'enumerazione dei ruoli |
+| `..._sysadmin_permissions.sql` | permessi del SystemAdmin e registro delle impersonificazioni |
+| `..._password_reset_requests.sql` | conteggio dei tentativi di recupero password |
+| `..._area_default_color.sql` | colore predefinito delle nuove aree allineato alla tavolozza Chamanit |
 
 ### Le Edge Function
 
@@ -392,6 +531,82 @@ supabase/
 | `submit-satisfaction` | le tabelle del gradimento non sono scrivibili da nessun utente; la funzione verifica il token e scrive senza registrare l'autore |
 | `submit-evaluation` | il punteggio va calcolato in un punto solo e non falsificabile; un trigger impedisce a chiunque altro di marcare una scheda come consegnata |
 | `manage-campaign` | generare decine di schede intestate a persone diverse richiederebbe permessi di scrittura molto ampi sul client |
+| `impersonate` | aprire una sessione a nome di un'altra persona richiede la chiave `service_role`; la funzione verifica che a chiederlo sia un SystemAdmin e scrive il registro degli accessi |
+| `request-password-reset` | genera il link di recupero con `service_role` e lo spedisce per conto proprio, senza dipendere dal servizio di posta interno; e' l'unica funzione pubblica |
+
+---
+
+## Tema chiaro e scuro
+
+### La tavolozza
+
+I colori sono quelli del company profile Chamanit:
+
+| | | |
+|---|---|---|
+| `#0A0D16` nero blu | `#1B3B8C` blu | `#4A1B7A` viola |
+| `#C238C4` magenta | `#E8865A` arancio | `#F4B594` pesca |
+| `#FFFFFF` bianco | | |
+
+Blu e viola fanno il lavoro pesante - sono il colore primario e quello
+secondario, quindi la voce di menu attiva, i pulsanti, le intestazioni, le
+pastiglie di ruolo. Magenta e arancio restano agli accenti e ai grafici, il nero
+blu e' il fondo del tema scuro, e la pagina di accesso attraversa tutta la
+sequenza in un gradiente.
+
+Due scelte meritano una riga di spiegazione. La prima: i colori che dicono
+"attenzione" o "errore" non sono stati sostituiti da blu e viola. Un pulsante di
+eliminazione viola sarebbe elegante e pericoloso - chi lo guarda di fretta non
+riconosce il segnale. Sono stati pero' riportati verso la famiglia della
+tavolozza (l'arancio di avviso e' quello del marchio, il verde e' virato verso
+il verde-azzurro dei grafici), cosi' convivono senza stonare. La seconda: ogni
+tinta ha due gradini, uno per il fondo chiaro e uno per quello scuro. Il blu
+`#1B3B8C` su `#0A0D16` e' praticamente invisibile; la sua versione schiarita
+resta riconoscibilmente lo stesso blu del marchio.
+
+Le aree gia' create nel database **non** cambiano colore: la tinta di un'area e'
+una scelta di chi la gestisce, e riscriverla d'ufficio cambierebbe sotto gli
+occhi dell'HR pastiglie e grafici a cui e' abituato. La migrazione
+`..._area_default_color.sql` sposta solo il valore predefinito, cioe' il colore
+che riceve un'area creata senza sceglierne uno. Per allineare le aree esistenti
+si riaprono e si ripesca il colore dalla tavolozza proposta.
+
+### Il passaggio fra i due temi
+
+L'applicazione nasce **scura**. Nella barra in alto, e anche nella pagina di
+accesso, un pulsante propone tre possibilita': chiaro, scuro e "come il
+sistema" (segue l'impostazione del computer, comoda per chi la sera passa
+automaticamente allo scuro). La scelta viene ricordata dal browser di chi l'ha
+fatta: e' una preferenza personale di visualizzazione, non un dato aziendale,
+quindi non viaggia fino al database.
+
+Due dettagli tecnici che vale la pena conoscere prima di mettere le mani sui
+colori:
+
+* i colori sono **variabili CSS** generate da MUI (`cssVariables` in
+  `lib/theme.ts`), non valori calcolati in JavaScript: cambiare tema significa
+  cambiare un attributo su `<html>`, senza ridisegnare l'albero React;
+* uno script inserito in `app/layout.tsx` applica il tema salvato **prima** del
+  primo disegno della pagina. Senza, chi ha scelto il tema chiaro vedrebbe un
+  lampo scuro a ogni caricamento. Il suo `attribute` deve restare allineato al
+  `colorSchemeSelector` del tema, altrimenti scrive un attributo che nessuna
+  regola CSS guarda e il lampo torna.
+
+I colori delle comunicazioni di calendario (blu per l'ufficio, viola per lo
+smart working, arancio per le assenze) hanno due versioni, definite in
+`app/globals.css`: le tinte sature per il fondo chiaro sparirebbero sul nero
+blu, quindi nel tema scuro si usano le varianti piu' chiare delle stesse tinte.
+
+Stesso problema, stessa soluzione, per i colori delle aree nei grafici. Il
+colore di un'area e' la sua identita' e non cambia con i filtri, ma su fondo
+scuro alcune tinte sparirebbero: `lib/chart-colors.ts` tiene per ognuna il
+gradino chiaro e quello scuro, e per i colori personalizzati calcola il gradino
+che raggiunge un contrasto di almeno 3:1 con la superficie, mantenendo la
+tinta. La tavolozza proposta all'HR e' una sequenza categorica verificata:
+colori adiacenti restano distinguibili anche con una percezione ridotta dei
+colori. Il colore non e' comunque mai l'unico portatore di identita' - la
+legenda porta nome e ultimo valore di ogni area, e la vista tabellare e' sempre
+presente.
 
 ---
 
@@ -399,11 +614,14 @@ supabase/
 
 Ogni tabella ha RLS attivo. In sintesi:
 
+Il SystemAdmin non compare nella tabella perche' ha ovunque i permessi
+dell'HR: `is_hr()` risponde "si'" anche a lui.
+
 | Dato | Dipendente | Responsabile | HR |
 |---|---|---|---|
 | Profili | il proprio + i colleghi della sua area | la propria area | tutti, in scrittura |
 | Calendario | scrive e legge il proprio | legge quello della sua area | legge e scrive tutto |
-| Richieste | le proprie | le proprie + quelle indirizzate al responsabile della sua area | tutte |
+| Richieste | le proprie | le proprie + quelle indirizzate al responsabile della sua area | tutte, in lettura e gestione; non puo' aprirne |
 | Schede di valutazione | le proprie, solo dopo la consegna | quelle che deve compilare + le autovalutazioni della sua area | tutte |
 | Gradimento (righe grezze) | nessun accesso | nessun accesso | **nessun accesso** |
 | KPI di gradimento | nessun accesso | solo la propria area, sopra soglia | tutte le aree, sopra soglia |
@@ -462,7 +680,7 @@ resta vuota.
 
 Le policy RLS sono la parte piu' delicata e sono coperte da una suite di
 controlli che verifica, ruolo per ruolo, cosa si vede e cosa si puo' modificare
-(44 asserzioni sulle policy piu' 7 sul primo avvio: escalation di privilegi, visibilita' fra aree, immutabilita'
+(63 asserzioni sulle policy piu' 7 sul primo avvio: escalation di privilegi, visibilita' fra aree, immutabilita'
 delle schede consegnate, inaccessibilita' dei dati di gradimento, soglia di
 riservatezza, e la finestra di primo avvio che si apre e si chiude una volta
 sola).

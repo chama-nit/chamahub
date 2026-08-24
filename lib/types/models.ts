@@ -6,7 +6,10 @@
 // eseguire `npm run db:types` e importare i tipi da lib/types/database.types.ts.
 // ---------------------------------------------------------------------------
 
-export type UserRole = "employee" | "manager" | "hr";
+// `sysadmin` sta sopra a tutti: eredita i permessi dell'HR e in piu' puo'
+// impersonare le altre persone. Non e' assegnabile dall'applicazione: nasce
+// solo dal database (supabase/scripts/03_crea_systemadmin.sql).
+export type UserRole = "employee" | "manager" | "hr" | "sysadmin";
 export type AttendanceType = "office" | "smart_working" | "absence";
 export type AbsenceKind = "vacation" | "leave" | "sick" | "other";
 export type DayPeriod = "full_day" | "morning" | "afternoon";
@@ -140,6 +143,8 @@ export interface Evaluation {
   kind: EvaluationKind;
   status: EvaluationStatus;
   overall_score: number | null;
+  /** Punteggio delle risposte originali, valorizzato solo se corretta. */
+  original_score?: number | null;
   comment: string | null;
   submitted_at: string | null;
   created_at: string;

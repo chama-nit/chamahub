@@ -6,10 +6,14 @@
 // Apertura, sincronizzazione e chiusura passano dalla Edge Function
 // `manage-campaign`, che genera le schede secondo una regola unica:
 //   * per ogni dipendente dell'area -> una scheda intestata al responsabile;
-//   * per ogni responsabile -> l'autovalutazione, se prevista.
+//   * per ogni persona coinvolta -> l'autovalutazione, se prevista.
+//
+// Finche' la campagna e' in bozza si puo' ancora cambiare tutto, o cancellarla:
+// non esiste ancora nessuna scheda. Dopo l'apertura no, e non e' una scelta di
+// interfaccia - un trigger sul database rifiuta modifica e cancellazione.
 // ---------------------------------------------------------------------------
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -39,6 +43,8 @@ import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
+import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
+import EditIcon from "@mui/icons-material/Edit";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import PollIcon from "@mui/icons-material/Poll";
 import StopIcon from "@mui/icons-material/Stop";
@@ -65,9 +71,15 @@ interface Loaded {
   templates: EvaluationTemplate[];
   areas: Area[];
   evaluations: Pick<Evaluation, "id" | "campaign_id" | "status" | "kind">[];
+  /** Aree associate a ciascuna campagna (nessuna riga = tutte le aree). */
+  campaignAreas: { campaign_id: string; area_id: string }[];
+  /** Persone attive con un'area: servono a stimare le schede di una bozza. */
+  people: { id: string; role: string; area_id: string | null }[];
 }
 
 interface DraftState {
+  /** Valorizzato quando si sta modificando una campagna gia' in bozza. */
+  id?: string;
   name: string;
   description: string;
   templateId: string;
@@ -102,6 +114,7 @@ export default function HrCampaignsPage() {
   const { profile } = useAuth();
 
   const [draft, setDraft] = useState<DraftState | null>(null);
+  const [toDelete, setToDelete] = useState<EvaluationCampaign | null>(null);
   const [busy, setBusy] = useState(false);
   // id della campagna su cui e' in corso un'azione (null = nessuna)
   const [workingOn, setWorkingOn] = useState<string | null>(null);
@@ -110,7 +123,8 @@ export default function HrCampaignsPage() {
   const { data, loading, error, reload } = useAsync<Loaded>(async () => {
     const supabase = getSupabase();
 
-    const [campaigns, templates, areas, evaluations] = await Promise.all([
+    const [campaigns, templates, areas, evaluations, campaignAreas, people] =
+      await Promise.all([
       supabase
         .from("evaluation_campaigns")
         .select("*")
@@ -123,9 +137,16 @@ export default function HrCampaignsPage() {
         .order("name"),
       supabase.from("areas").select("*").eq("is_active", true).order("name"),
       supabase.from("evaluations").select("id, campaign_id, status, kind"),
+      supabase.from("evaluation_campaign_areas").select("campaign_id, area_id"),
+      supabase
+        .from("profiles")
+        .select("id, role, area_id")
+        .eq("is_active", true),
     ]);
 
-    for (const result of [campaigns, templates, areas, evaluations]) {
+    for (
+      const result of [campaigns, templates, areas, evaluations, campaignAreas, people]
+    ) {
       if (result.error) throw new Error(result.error.message);
     }
 
@@ -134,8 +155,51 @@ export default function HrCampaignsPage() {
       templates: (templates.data ?? []) as EvaluationTemplate[],
       areas: (areas.data ?? []) as Area[],
       evaluations: (evaluations.data ?? []) as Loaded["evaluations"],
+      campaignAreas: (campaignAreas.data ?? []) as Loaded["campaignAreas"],
+      people: (people.data ?? []) as Loaded["people"],
     };
   }, []);
+
+  // Quante schede genererebbe una campagna ancora in bozza.
+  // -------------------------------------------------------------------------
+  // Una bozza non ha schede: mostrare "0 / 0" e' vero ma inutile, perche' non
+  // dice se all'apertura uscira' qualcosa o niente. La stima ripete la stessa
+  // regola della Edge Function: una scheda del responsabile per ogni
+  // dipendente di un'area che abbia un responsabile, piu' l'autovalutazione di
+  // ognuno se prevista.
+  const estimate = useCallback(
+    (campaign: EvaluationCampaign) => {
+      const people = data?.people ?? [];
+      const selectedAreas = (data?.campaignAreas ?? [])
+        .filter((row) => row.campaign_id === campaign.id)
+        .map((row) => row.area_id);
+
+      const areaIds = selectedAreas.length > 0
+        ? selectedAreas
+        : (data?.areas ?? []).map((area) => area.id);
+
+      const involved = people.filter(
+        (person) => person.area_id && areaIds.includes(person.area_id),
+      );
+
+      const areasWithManager = new Set(
+        involved.filter((p) => p.role === "manager").map((p) => p.area_id),
+      );
+
+      const reviews = involved.filter(
+        (p) => p.role === "employee" && areasWithManager.has(p.area_id),
+      ).length;
+
+      const orphans = involved.filter(
+        (p) => p.role === "employee" && !areasWithManager.has(p.area_id),
+      ).length;
+
+      const selfs = campaign.include_self_assessment ? involved.length : 0;
+
+      return { total: reviews + selfs, reviews, selfs, orphans };
+    },
+    [data],
+  );
 
   // Avanzamento per campagna, calcolato dalle schede gia' generate.
   const progress = useMemo(() => {
@@ -149,43 +213,105 @@ export default function HrCampaignsPage() {
     return map;
   }, [data]);
 
-  async function createCampaign() {
+  /** Crea la campagna, oppure aggiorna quella in bozza che si sta modificando. */
+  async function saveCampaign() {
     if (!draft) return;
     setBusy(true);
     try {
       const supabase = getSupabase();
 
-      const { data: created, error: insertError } = await supabase
-        .from("evaluation_campaigns")
-        .insert({
-          name: draft.name.trim(),
-          description: draft.description.trim() || null,
-          template_id: draft.templateId,
-          self_template_id: draft.includeSelf ? draft.selfTemplateId || null : null,
-          include_self_assessment: draft.includeSelf,
-          starts_on: draft.startsOn,
-          ends_on: draft.endsOn,
-          created_by: profile?.id ?? null,
-        })
-        .select("id")
-        .single();
+      const values = {
+        name: draft.name.trim(),
+        description: draft.description.trim() || null,
+        template_id: draft.templateId,
+        self_template_id: draft.includeSelf ? draft.selfTemplateId || null : null,
+        include_self_assessment: draft.includeSelf,
+        starts_on: draft.startsOn,
+        ends_on: draft.endsOn,
+      };
 
-      if (insertError) throw new Error(insertError.message);
+      let campaignId = draft.id;
+
+      if (campaignId) {
+        const { error: updateError } = await supabase
+          .from("evaluation_campaigns")
+          .update(values)
+          .eq("id", campaignId);
+        if (updateError) throw new Error(updateError.message);
+
+        // Le aree si riscrivono per intero: sono poche e ragionare per
+        // differenza, qui, costerebbe piu' codice di quanto valga.
+        const { error: clearError } = await supabase
+          .from("evaluation_campaign_areas")
+          .delete()
+          .eq("campaign_id", campaignId);
+        if (clearError) throw new Error(clearError.message);
+      } else {
+        const { data: created, error: insertError } = await supabase
+          .from("evaluation_campaigns")
+          .insert({ ...values, created_by: profile?.id ?? null })
+          .select("id")
+          .single();
+        if (insertError) throw new Error(insertError.message);
+        campaignId = created.id as string;
+      }
 
       if (draft.areaIds.length > 0) {
         const { error: areasError } = await supabase
           .from("evaluation_campaign_areas")
           .insert(
             draft.areaIds.map((areaId) => ({
-              campaign_id: created.id,
+              campaign_id: campaignId,
               area_id: areaId,
             })),
           );
         if (areasError) throw new Error(areasError.message);
       }
 
-      toast.success("Campagna creata in bozza. Aprila per generare le schede.");
+      toast.success(
+        draft.id
+          ? `«${values.name}» aggiornata.`
+          : "Campagna creata in bozza. Aprila per generare le schede.",
+      );
       setDraft(null);
+      reload();
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Carica una bozza nel modulo di modifica, aree comprese. */
+  function editCampaign(campaign: EvaluationCampaign) {
+    setDraft({
+      id: campaign.id,
+      name: campaign.name,
+      description: campaign.description ?? "",
+      templateId: campaign.template_id,
+      selfTemplateId: campaign.self_template_id ?? "",
+      includeSelf: campaign.include_self_assessment,
+      startsOn: campaign.starts_on,
+      endsOn: campaign.ends_on,
+      areaIds: (data?.campaignAreas ?? [])
+        .filter((row) => row.campaign_id === campaign.id)
+        .map((row) => row.area_id),
+    });
+  }
+
+  async function deleteCampaign() {
+    if (!toDelete) return;
+    setBusy(true);
+    try {
+      const supabase = getSupabase();
+      const { error: deleteError } = await supabase
+        .from("evaluation_campaigns")
+        .delete()
+        .eq("id", toDelete.id);
+      if (deleteError) throw new Error(deleteError.message);
+
+      toast.success(`«${toDelete.name}» eliminata.`);
+      setToDelete(null);
       reload();
     } catch (err) {
       toast.error(err);
@@ -285,6 +411,8 @@ export default function HrCampaignsPage() {
                   const percentage = stats.total === 0
                     ? 0
                     : (stats.submitted / stats.total) * 100;
+                  const isDraft = campaign.status === "draft";
+                  const forecast = isDraft ? estimate(campaign) : null;
 
                   return (
                     <Card
@@ -323,25 +451,66 @@ export default function HrCampaignsPage() {
                             </Typography>
                           )}
 
-                          <Box sx={{ pt: 0.5 }}>
-                            <Stack
-                              direction="row"
-                              spacing={1}
-                              sx={{ justifyContent: "space-between", mb: 0.5 }}
-                            >
-                              <Typography variant="caption" color="text.secondary">
-                                Schede consegnate
-                              </Typography>
-                              <Typography variant="caption" sx={{ fontWeight: 700 }}>
-                                {stats.submitted} / {stats.total}
-                              </Typography>
-                            </Stack>
-                            <LinearProgress
-                              variant="determinate"
-                              value={percentage}
-                              sx={{ height: 6, borderRadius: 3 }}
-                            />
-                          </Box>
+                          {/* In bozza non esistono schede: al loro posto si
+                              mostra quante ne nascerebbero all'apertura. */}
+                          {forecast
+                            ? (
+                              <Box sx={{ pt: 0.5 }}>
+                                <Typography variant="caption" color="text.secondary">
+                                  Ancora in bozza: nessuna scheda generata.
+                                </Typography>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                  {forecast.total === 0
+                                    ? "All'apertura non verrebbe generata nessuna scheda."
+                                    : forecast.total === 1
+                                    ? "All'apertura: 1 scheda"
+                                    : `All'apertura: ${forecast.total} schede`}
+                                </Typography>
+                                {forecast.total > 0 && (
+                                  <Typography variant="caption" color="text.secondary">
+                                    {forecast.reviews} dal responsabile
+                                    {forecast.selfs > 0
+                                      ? `, ${forecast.selfs} di autovalutazione`
+                                      : ""}
+                                  </Typography>
+                                )}
+                                {forecast.orphans > 0 && (
+                                  <Typography variant="caption" color="warning.main" sx={{ display: "block" }}>
+                                    {forecast.orphans === 1
+                                      ? "1 persona e' in un'area senza responsabile"
+                                      : `${forecast.orphans} persone sono in aree senza responsabile`}: per loro non nascera&apos; nessuna scheda.
+                                  </Typography>
+                                )}
+                                {forecast.total === 0 && (
+                                  <Typography variant="caption" color="warning.main" sx={{ display: "block" }}>
+                                    Le aree scelte non hanno dipendenti da
+                                    valutare e l&apos;autovalutazione e&apos;
+                                    disattivata.
+                                  </Typography>
+                                )}
+                              </Box>
+                            )
+                            : (
+                              <Box sx={{ pt: 0.5 }}>
+                                <Stack
+                                  direction="row"
+                                  spacing={1}
+                                  sx={{ justifyContent: "space-between", mb: 0.5 }}
+                                >
+                                  <Typography variant="caption" color="text.secondary">
+                                    Schede consegnate
+                                  </Typography>
+                                  <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                                    {stats.submitted} / {stats.total}
+                                  </Typography>
+                                </Stack>
+                                <LinearProgress
+                                  variant="determinate"
+                                  value={percentage}
+                                  sx={{ height: 6, borderRadius: 3 }}
+                                />
+                              </Box>
+                            )}
 
                           <Stack
                             direction="row"
@@ -390,6 +559,29 @@ export default function HrCampaignsPage() {
                                   </Button>
                                 </>
                               )}
+                            {/* Modifica ed eliminazione solo in bozza: dopo
+                                l'apertura ci sono schede compilate dietro. */}
+                            {isDraft && (
+                              <>
+                                <Button
+                                  size="small"
+                                  startIcon={<EditIcon />}
+                                  onClick={() => editCampaign(campaign)}
+                                  disabled={workingOn !== null}
+                                >
+                                  Modifica
+                                </Button>
+                                <Button
+                                  size="small"
+                                  color="error"
+                                  startIcon={<DeleteOutlinedIcon />}
+                                  onClick={() => setToDelete(campaign)}
+                                  disabled={workingOn !== null}
+                                >
+                                  Elimina
+                                </Button>
+                              </>
+                            )}
                             <Button
                               size="small"
                               onClick={() =>
@@ -417,7 +609,7 @@ export default function HrCampaignsPage() {
         fullWidth
         maxWidth="sm"
       >
-        <DialogTitle>Nuova campagna</DialogTitle>
+        <DialogTitle>{draft?.id ? "Modifica campagna" : "Nuova campagna"}</DialogTitle>
         <DialogContent dividers>
           {draft && (
             <Stack spacing={2} sx={{ pt: 0.5 }}>
@@ -466,7 +658,7 @@ export default function HrCampaignsPage() {
                       setDraft({ ...draft, includeSelf: event.target.checked })}
                   />
                 }
-                label="Includi l'autovalutazione dei responsabili"
+                label="Includi l'autovalutazione (di tutte le persone coinvolte)"
               />
 
               {draft.includeSelf && (
@@ -562,11 +754,39 @@ export default function HrCampaignsPage() {
           </Button>
           <Button
             variant="contained"
-            onClick={createCampaign}
+            onClick={saveCampaign}
             disabled={busy || !draft?.name.trim() || !draft?.templateId ||
               (draft.includeSelf && !draft.selfTemplateId)}
           >
-            Crea in bozza
+            {draft?.id ? "Salva le modifiche" : "Crea in bozza"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ------------------------------------------------------------------ */}
+      <Dialog open={toDelete !== null} onClose={() => setToDelete(null)}>
+        <DialogTitle>Eliminare la campagna?</DialogTitle>
+        <DialogContent dividers>
+          <Typography>
+            «{toDelete?.name}» verra&apos; eliminata definitivamente.
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            E&apos; ancora in bozza, quindi non esiste nessuna scheda: non si
+            perde nulla di compilato. Una campagna gia&apos; aperta, invece, non
+            si puo&apos; eliminare - si chiude e resta come storico.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={() => setToDelete(null)} disabled={busy}>
+            Annulla
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={deleteCampaign}
+            disabled={busy}
+          >
+            Elimina
           </Button>
         </DialogActions>
       </Dialog>

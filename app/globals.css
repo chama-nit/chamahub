@@ -28,6 +28,42 @@
      l'applicazione si compila anche in ambienti senza rete. */
   --font-app: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, "Noto Sans", sans-serif;
+
+  /* Colori delle comunicazioni di calendario (ufficio, smart working,
+     assenza) e della serie dei grafici a barre. Stanno qui, e non in
+     lib/theme.ts, perche' servono anche a SVG e a fondi sfumati; la variante
+     "-soft" e' lo stesso colore molto trasparente, usata come fondo delle
+     pastiglie.
+
+     Sono le tinte del marchio: blu per l'ufficio, viola per lo smart working,
+     arancio per l'assenza. Le tre restano distinguibili anche da chi ha una
+     percezione ridotta dei colori, e comunque ogni pastiglia porta scritto
+     cosa significa.
+
+     Il tema scuro le ridefinisce piu' sotto: il blu #1B3B8C e il viola
+     #4A1B7A del profilo aziendale, su fondo #0A0D16, sparirebbero. */
+  --att-office: #1b3b8c;
+  --att-office-soft: rgba(27, 59, 140, 0.12);
+  --att-smart: #6b2fa8;
+  --att-smart-soft: rgba(107, 47, 168, 0.12);
+  --att-absence: #a8522e;
+  --att-absence-soft: rgba(232, 134, 90, 0.16);
+
+  /* Barre dei grafici: una sola tinta, il blu del marchio. */
+  --chart-series: #3a5fc0;
+  --chart-series-soft: rgba(58, 95, 192, 0.1);
+}
+
+[data-mui-color-scheme="dark"] {
+  --att-office: #8faaf0;
+  --att-office-soft: rgba(143, 170, 240, 0.18);
+  --att-smart: #c09bee;
+  --att-smart-soft: rgba(192, 155, 238, 0.18);
+  --att-absence: #f0a47c;
+  --att-absence-soft: rgba(240, 164, 124, 0.18);
+
+  --chart-series: #5b7fe0;
+  --chart-series-soft: rgba(91, 127, 224, 0.14);
 }
 
 html,
@@ -41,8 +77,10 @@ body {
   height: 10px;
 }
 
+/* Grigio neutro a meta' strada: si vede sia sul chiaro sia sullo scuro senza
+   dover duplicare la regola per i due temi. */
 *::-webkit-scrollbar-thumb {
-  background-color: rgba(0, 0, 0, 0.18);
+  background-color: rgba(128, 128, 128, 0.4);
   border-radius: 8px;
 }
 

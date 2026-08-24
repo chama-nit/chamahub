@@ -55,6 +55,10 @@ interface Payload {
   redirect_to?: string;
 }
 
+// `sysadmin` non compare di proposito: quel ruolo non si assegna
+// dall'applicazione, nemmeno da parte di un sysadmin. Nasce solo dal database
+// (supabase/scripts/03_crea_systemadmin.sql), cosi' non esiste una scala che si
+// possa salire da dentro l'applicazione.
 const VALID_ROLES: UserRole[] = ["employee", "manager", "hr"];
 
 /**
@@ -136,6 +140,33 @@ function generatePassword(): string {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
+}
+
+/**
+ * Un profilo SystemAdmin e' intoccabile per chiunque non lo sia a sua volta.
+ * Il controllo vive qui e non nel database perche' questa funzione lavora con
+ * `service_role`, che per definizione scavalca le policy: se il divieto non e'
+ * scritto in questo punto, non e' scritto da nessuna parte.
+ */
+async function assertMayTouch(
+  admin: SupabaseClient,
+  caller: { id: string; role: UserRole },
+  targetId: string,
+) {
+  const { data: target, error } = await admin
+    .from("profiles")
+    .select("role")
+    .eq("id", targetId)
+    .maybeSingle();
+
+  if (error) throw fromSupabaseError(error);
+
+  if (target?.role === "sysadmin" && caller.role !== "sysadmin") {
+    throw new AuthError(
+      "Questo profilo e' un SystemAdmin: solo un altro SystemAdmin puo' modificarlo.",
+      403,
+    );
+  }
 }
 
 async function applyProfile(
@@ -272,6 +303,7 @@ Deno.serve(async (req: Request) => {
       case "update":
       case "set_role": {
         assert(body.id, "Identificativo del dipendente mancante.");
+        await assertMayTouch(admin, caller, body.id!);
         assert(
           body.id !== caller.id || body.role === undefined ||
             body.role === "hr",
@@ -288,6 +320,7 @@ Deno.serve(async (req: Request) => {
           body.id !== caller.id,
           "Non puoi disattivare il tuo stesso account.",
         );
+        await assertMayTouch(admin, caller, body.id!);
 
         // Blocca anche l'autenticazione, non solo l'accesso applicativo.
         const { error: banError } = await admin.auth.admin.updateUserById(
@@ -305,6 +338,7 @@ Deno.serve(async (req: Request) => {
       // ---------------------------------------------------------------------
       case "reactivate": {
         assert(body.id, "Identificativo del dipendente mancante.");
+        await assertMayTouch(admin, caller, body.id!);
         const { error: banError } = await admin.auth.admin.updateUserById(
           body.id!,
           { ban_duration: "none" },
@@ -324,6 +358,7 @@ Deno.serve(async (req: Request) => {
           body.id !== caller.id,
           "Non puoi eliminare il tuo stesso account.",
         );
+        await assertMayTouch(admin, caller, body.id!);
 
         // L'eliminazione dell'utente propaga in cascata a profiles e a tutti i
         // dati collegati (calendario, richieste, valutazioni). Le compilazioni

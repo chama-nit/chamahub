@@ -39,6 +39,7 @@ import { getSupabase } from "@/lib/supabase/client";
 import {
   ABSENCE_LABELS,
   ATTENDANCE_COLORS,
+  ATTENDANCE_SOFT_COLORS,
   ATTENDANCE_LABELS,
   PERIOD_LABELS,
   PERIOD_SHORT,
@@ -211,7 +212,7 @@ export default function MyCalendarPage() {
                   monthStats[type].toString().replace(".", ",")
                 } gg`}
                 sx={{
-                  bgcolor: `${ATTENDANCE_COLORS[type]}1a`,
+                  bgcolor: ATTENDANCE_SOFT_COLORS[type],
                   color: ATTENDANCE_COLORS[type],
                   fontWeight: 700,
                 }}
@@ -239,7 +240,7 @@ export default function MyCalendarPage() {
                           px: 0.75,
                           py: 0.25,
                           borderRadius: 1,
-                          bgcolor: `${ATTENDANCE_COLORS[entry.type]}1f`,
+                          bgcolor: ATTENDANCE_SOFT_COLORS[entry.type],
                           borderLeft: `3px solid ${ATTENDANCE_COLORS[entry.type]}`,
                         }}
                       >

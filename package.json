@@ -11,7 +11,7 @@
     "db:push": "npx supabase db push",
     "db:reset": "npx supabase db reset",
     "db:types": "npx supabase gen types typescript --linked > lib/types/database.types.ts",
-    "functions:deploy": "npx supabase functions deploy admin-users && npx supabase functions deploy submit-satisfaction && npx supabase functions deploy submit-evaluation && npx supabase functions deploy manage-campaign"
+    "functions:deploy": "npx supabase functions deploy admin-users && npx supabase functions deploy submit-satisfaction && npx supabase functions deploy submit-evaluation && npx supabase functions deploy manage-campaign && npx supabase functions deploy impersonate && npx supabase functions deploy request-password-reset"
   },
   "dependencies": {
     "@emotion/cache": "^11.14.0",

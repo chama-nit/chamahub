@@ -33,6 +33,7 @@ import TableCell from "@mui/material/TableCell";
 import TableContainer from "@mui/material/TableContainer";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
+import TableSortLabel from "@mui/material/TableSortLabel";
 import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
@@ -79,6 +80,8 @@ export default function HrEvaluationsPage() {
   const router = useRouter();
 
   const [groupBy, setGroupBy] = useState<GroupBy>("area");
+  // null = ordine predefinito (per nome); "asc" e "desc" ordinano per punteggio.
+  const [scoreSort, setScoreSort] = useState<"asc" | "desc" | null>(null);
   const [campaignFilter, setCampaignFilter] = useState("all");
   const [kindFilter, setKindFilter] = useState<EvaluationKind | "all">("all");
   const [statusFilter, setStatusFilter] = useState<EvaluationStatus | "all">("all");
@@ -161,10 +164,27 @@ export default function HrEvaluationsPage() {
       map.set(key, bucket);
     }
 
+    // Ordinamento per punteggio, dentro ogni gruppo.
+    // -----------------------------------------------------------------------
+    // Le schede senza punteggio (non ancora consegnate) restano sempre in
+    // fondo, in entrambi i versi: sono un'assenza di dato, non uno zero, e
+    // farle risalire in cima con "dal piu' basso" direbbe una cosa falsa.
+    if (scoreSort) {
+      const direction = scoreSort === "asc" ? 1 : -1;
+      for (const bucket of map.values()) {
+        bucket.rows.sort((a, b) => {
+          if (a.overall_score === null && b.overall_score === null) return 0;
+          if (a.overall_score === null) return 1;
+          if (b.overall_score === null) return -1;
+          return (a.overall_score - b.overall_score) * direction;
+        });
+      }
+    }
+
     return [...map.entries()]
       .map(([key, value]) => ({ key, ...value }))
       .sort((a, b) => a.label.localeCompare(b.label, "it"));
-  }, [filtered, groupBy]);
+  }, [filtered, groupBy, scoreSort]);
 
   return (
     <>
@@ -356,7 +376,24 @@ export default function HrEvaluationsPage() {
                                 <TableCell>Compilata da</TableCell>
                                 <TableCell>Campagna</TableCell>
                                 <TableCell>Stato</TableCell>
-                                <TableCell>Punteggio</TableCell>
+                                <TableCell
+                                  sortDirection={scoreSort ?? false}
+                                >
+                                  <TableSortLabel
+                                    active={scoreSort !== null}
+                                    direction={scoreSort ?? "asc"}
+                                    onClick={() =>
+                                      setScoreSort((current) =>
+                                        current === "asc"
+                                          ? "desc"
+                                          : current === "desc"
+                                          ? null
+                                          : "asc"
+                                      )}
+                                  >
+                                    Punteggio
+                                  </TableSortLabel>
+                                </TableCell>
                                 <TableCell>Consegnata il</TableCell>
                                 <TableCell />
                               </TableRow>
@@ -444,6 +481,17 @@ export default function HrEvaluationsPage() {
                                             value={Math.min(e.overall_score, 100)}
                                             sx={{ height: 4, borderRadius: 3 }}
                                           />
+                                          {/* Scheda corretta: si vede anche da
+                                              quanto partiva. */}
+                                          {e.original_score !== null &&
+                                            e.original_score !== undefined && (
+                                            <Typography
+                                              variant="caption"
+                                              color="text.secondary"
+                                            >
+                                              prima: {formatScore(e.original_score)}
+                                            </Typography>
+                                          )}
                                         </Stack>
                                       )}
                                   </TableCell>

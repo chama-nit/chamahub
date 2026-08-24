@@ -24,8 +24,11 @@ major_version = 17
 enabled = true
 port = 54323
 
-[inbucket]
-# Cattura le email in locale (inviti, recupero password).
+# Cattura le email in locale (inviti, recupero password). La sezione si
+# chiamava [inbucket] fino alle versioni recenti della CLI, che ora avvisa
+# della deprecazione: il nome nuovo e' [local_smtp]. Riguarda solo lo sviluppo
+# in locale, non il progetto remoto.
+[local_smtp]
 enabled = true
 port = 54324
 
@@ -90,3 +93,13 @@ verify_jwt = true
 
 [functions.manage-campaign]
 verify_jwt = true
+
+[functions.impersonate]
+verify_jwt = true
+
+# Chi ha perso la password non ha una sessione con cui presentarsi: questa
+# funzione DEVE essere pubblica. Non e' un buco - non restituisce nulla di
+# riservato, risponde sempre allo stesso modo a qualunque indirizzo e limita a
+# tre tentativi all'ora per indirizzo.
+[functions.request-password-reset]
+verify_jwt = false

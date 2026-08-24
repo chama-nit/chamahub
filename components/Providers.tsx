@@ -15,7 +15,11 @@ import theme from "@/lib/theme";
 export default function Providers({ children }: { children: ReactNode }) {
   return (
     <AppRouterCacheProvider options={{ key: "mui", enableCssLayer: true }}>
-      <ThemeProvider theme={theme}>
+      {/* defaultMode="dark": alla prima visita si parte dal tema scuro; da li'
+          in poi vale la scelta della persona, ricordata da MUI in
+          localStorage e riapplicata prima del primo disegno dallo script in
+          app/layout.tsx. */}
+      <ThemeProvider theme={theme} defaultMode="dark">
         <CssBaseline />
         <ToastProvider>
           <AuthProvider>{children}</AuthProvider>

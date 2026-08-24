@@ -26,6 +26,7 @@ import { getSupabase } from "@/lib/supabase/client";
 import {
   ATTENDANCE_COLORS,
   ATTENDANCE_LABELS,
+  ATTENDANCE_SOFT_COLORS,
   PERIOD_LABELS,
   attendanceLabel,
 } from "@/lib/labels";
@@ -249,7 +250,7 @@ export default function HrCalendarPage() {
                                 px: 0.5,
                                 py: 0.15,
                                 borderRadius: 1,
-                                bgcolor: `${ATTENDANCE_COLORS[type]}1f`,
+                                bgcolor: ATTENDANCE_SOFT_COLORS[type],
                               }}
                             >
                               <Box
@@ -328,7 +329,7 @@ export default function HrCalendarPage() {
                           size="small"
                           label={attendanceLabel(entry.type, entry.absence_kind)}
                           sx={{
-                            bgcolor: `${ATTENDANCE_COLORS[entry.type]}1a`,
+                            bgcolor: ATTENDANCE_SOFT_COLORS[entry.type],
                             color: ATTENDANCE_COLORS[entry.type],
                             fontWeight: 700,
                             flexShrink: 0,

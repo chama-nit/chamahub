@@ -162,7 +162,27 @@ export default function EvaluationDetailPage(
     [questions, answers],
   );
 
-  const completed = questions.length - missingRequired.length;
+  // Quante domande risultano davvero compilate.
+  // ---------------------------------------------------------------------
+  // La versione precedente contava "tutte meno quelle obbligatorie che
+  // mancano": le facoltative risultavano quindi complete anche se nessuno le
+  // aveva toccate, e il conteggio diceva 5/5 con due caselle vuote a schermo.
+  // Qui si guarda la risposta, non l'obbligatorieta'.
+  const answered = useMemo(
+    () =>
+      questions.filter((question) => {
+        const state = answers[question.id];
+        return question.type === "scale"
+          ? state?.numeric !== null && state?.numeric !== undefined
+          : Boolean(state?.text?.trim());
+      }).length,
+    [questions, answers],
+  );
+
+  const optionalCount = useMemo(
+    () => questions.filter((question) => !question.is_required).length,
+    [questions],
+  );
 
   /** Anteprima del punteggio, con la stessa formula usata dal server. */
   const previewScore = useMemo(() => {
@@ -384,21 +404,43 @@ export default function EvaluationDetailPage(
               sx={{
                 display: "grid",
                 gap: 2,
-                gridTemplateColumns: { xs: "1fr", sm: "repeat(3, 1fr)" },
+                gridTemplateColumns: {
+                  xs: "1fr",
+                  sm: "repeat(auto-fit, minmax(210px, 1fr))",
+                },
               }}
             >
               <StatCard
-                label="Domande completate"
-                value={`${completed} / ${questions.length}`}
+                label="Domande compilate"
+                value={`${answered} / ${questions.length}`}
+                hint={optionalCount > 0
+                  ? `${optionalCount} facoltative: contano solo se compilate`
+                  : "Tutte obbligatorie"}
               />
+              {/* Se la scheda e' stata corretta i punteggi sono due: quello
+                  uscito dalle risposte della persona e quello dopo
+                  l'intervento del responsabile. Mostrarne uno solo
+                  nasconderebbe proprio l'informazione interessante. */}
               <StatCard
                 label={submitted ? "Punteggio finale" : "Punteggio provvisorio"}
                 value={submitted
                   ? `${formatScore(evaluation.overall_score)} / 100`
                   : `${formatScore(previewScore)} / 100`}
-                hint="Media pesata delle domande a scala"
+                hint={evaluation.original_score !== null &&
+                    evaluation.original_score !== undefined
+                  ? "Dopo la correzione del responsabile"
+                  : "Media pesata delle domande a scala"}
                 color="secondary.main"
               />
+
+              {evaluation.original_score !== null &&
+                evaluation.original_score !== undefined && (
+                <StatCard
+                  label="Prima della correzione"
+                  value={`${formatScore(evaluation.original_score)} / 100`}
+                  hint="Calcolato sulle risposte originali"
+                />
+              )}
               <StatCard
                 label="Scadenza campagna"
                 value={evaluation.evaluation_campaigns?.ends_on
@@ -421,7 +463,7 @@ export default function EvaluationDetailPage(
                   variant="determinate"
                   value={questions.length === 0
                     ? 0
-                    : (completed / questions.length) * 100}
+                    : (answered / questions.length) * 100}
                   sx={{ height: 6, borderRadius: 3 }}
                 />
               </Box>

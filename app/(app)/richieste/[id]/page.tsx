@@ -225,14 +225,20 @@ export default function RequestDetailPage(
                 {data.messages.map((message) => {
                   const mine = message.author_id === profile?.id;
                   return (
+                    // `direction` e `useFlexGap` invece di rovesciare la
+                    // direzione con `sx`: Stack, per distanziare, mette un
+                    // margine sinistro sul secondo elemento del DOM. Con la
+                    // riga rovesciata quel margine finisce dalla parte
+                    // sbagliata - lo spazio si apre verso il bordo e la
+                    // nuvoletta va a sbattere contro l'avatar. Con `gap` la
+                    // distanza sta fra i due elementi, comunque siano
+                    // ordinati.
                     <Stack
                       key={message.id}
-                      direction="row"
+                      direction={mine ? "row-reverse" : "row"}
                       spacing={1.5}
-                      sx={{
-                        alignItems: "flex-start",
-                        flexDirection: mine ? "row-reverse" : "row",
-                      }}
+                      useFlexGap
+                      sx={{ alignItems: "flex-start" }}
                     >
                       <Avatar
                         sx={{

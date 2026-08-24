@@ -22,7 +22,12 @@ import { AsyncBlock, AutoGrid, SectionCard, StatCard } from "@/components/ui";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useAsync } from "@/lib/hooks";
 import { getSupabase } from "@/lib/supabase/client";
-import { ATTENDANCE_COLORS, ATTENDANCE_LABELS, ROLE_LABELS } from "@/lib/labels";
+import {
+  ATTENDANCE_COLORS,
+  ATTENDANCE_LABELS,
+  ATTENDANCE_SOFT_COLORS,
+  ROLE_LABELS,
+} from "@/lib/labels";
 import type { AttendanceType, DashboardSummary } from "@/lib/types/models";
 
 const ATTENDANCE_ORDER: AttendanceType[] = ["office", "smart_working", "absence"];
@@ -55,7 +60,7 @@ function TodayBreakdown({
           key={type}
           label={`${ATTENDANCE_LABELS[type]}: ${counts[type] ?? 0}`}
           sx={{
-            bgcolor: `${ATTENDANCE_COLORS[type]}1a`,
+            bgcolor: ATTENDANCE_SOFT_COLORS[type],
             color: ATTENDANCE_COLORS[type],
             fontWeight: 700,
           }}
@@ -102,13 +107,18 @@ export default function DashboardPage() {
               hint="Nei prossimi 30 giorni"
               icon={<CalendarMonthIcon />}
             />
-            <StatCard
-              label="Richieste aperte"
-              value={data?.my_open_requests ?? 0}
-              hint="Inviate da te"
-              icon={<QuestionAnswerIcon />}
-              color="warning.main"
-            />
+            {/* L'HR non invia richieste: il riquadro sarebbe fermo a zero per
+                sempre. Le richieste che riceve hanno gia' il loro riquadro
+                piu' sotto. */}
+            {role !== "hr" && (
+              <StatCard
+                label="Richieste aperte"
+                value={data?.my_open_requests ?? 0}
+                hint="Inviate da te"
+                icon={<QuestionAnswerIcon />}
+                color="warning.main"
+              />
+            )}
             <StatCard
               label="Schede da compilare"
               value={data?.pending_evaluations ?? 0}
@@ -225,13 +235,14 @@ export default function DashboardPage() {
               >
                 Comunica le tue giornate
               </Button>
+              {/* L'HR le richieste le riceve, non le invia. */}
               <Button
                 component={NextLink}
                 href="/richieste"
                 variant="outlined"
                 startIcon={<QuestionAnswerIcon />}
               >
-                Invia una richiesta
+                {role === "hr" ? "Vedi le richieste ricevute" : "Invia una richiesta"}
               </Button>
               {role !== "hr" && (
                 <Button

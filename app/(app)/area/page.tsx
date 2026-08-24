@@ -39,6 +39,7 @@ import { useAsync } from "@/lib/hooks";
 import { getSupabase } from "@/lib/supabase/client";
 import {
   ATTENDANCE_COLORS,
+  ATTENDANCE_SOFT_COLORS,
   ATTENDANCE_LABELS,
   PERIOD_LABELS,
   ROLE_LABELS,
@@ -218,7 +219,7 @@ export default function MyAreaPage() {
                                 px: 0.5,
                                 py: 0.1,
                                 borderRadius: 1,
-                                bgcolor: `${ATTENDANCE_COLORS[entry.type]}1f`,
+                                bgcolor: ATTENDANCE_SOFT_COLORS[entry.type],
                               }}
                             >
                               <Box
@@ -331,7 +332,7 @@ export default function MyAreaPage() {
                                       size="small"
                                       label={attendanceLabel(entry.type, entry.absence_kind)}
                                       sx={{
-                                        bgcolor: `${ATTENDANCE_COLORS[entry.type]}1a`,
+                                        bgcolor: ATTENDANCE_SOFT_COLORS[entry.type],
                                         color: ATTENDANCE_COLORS[entry.type],
                                         fontWeight: 700,
                                       }}

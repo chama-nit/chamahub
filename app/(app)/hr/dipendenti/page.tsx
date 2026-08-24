@@ -50,7 +50,7 @@ import { useToast } from "@/components/ToastProvider";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useAsync } from "@/lib/hooks";
 import { callFunction, getSupabase } from "@/lib/supabase/client";
-import { ROLE_LABELS } from "@/lib/labels";
+import { ASSIGNABLE_ROLES, ROLE_LABELS } from "@/lib/labels";
 import { formatDay, initials } from "@/lib/format";
 import type { Area, Profile, UserRole } from "@/lib/types/models";
 
@@ -635,7 +635,9 @@ export default function HrEmployeesPage() {
                     onChange={(event) =>
                       setEditor({ ...editor, role: event.target.value as UserRole })}
                   >
-                    {(Object.keys(ROLE_LABELS) as UserRole[]).map((role) => (
+                    {/* Nell'elenco delle assegnazioni non compare
+                        SystemAdmin: non e' un ruolo che si da' da qui. */}
+                    {ASSIGNABLE_ROLES.map((role) => (
                       <MenuItem key={role} value={role}>
                         {ROLE_LABELS[role]}
                       </MenuItem>

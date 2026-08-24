@@ -30,27 +30,28 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
 
-import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
+import {
+  callPublicFunction,
+  getSupabase,
+  isSupabaseConfigured,
+} from "@/lib/supabase/client";
 import { describeAuthError, type FriendlyError } from "@/lib/auth/errors";
 import MicrosoftIcon from "@/components/MicrosoftIcon";
+import ThemeToggle from "@/components/ThemeToggle";
 
 type Mode = "password" | "recovery";
 
-// Il pulsante Microsoft e' nascosto per impostazione predefinita: finche' la
-// registrazione su Azure non e' completa, mostrarlo significherebbe lasciare a
-// schermo un comando che fallisce.
+// Accesso con account Microsoft (Entra ID).
 //
-// Il codice dell'accesso Microsoft resta tutto al suo posto (la funzione
-// `signInWithMicrosoft` qui sotto, la rotta `/auth/callback`, la guida in
-// docs/microsoft-entra-id.md): per riattivarlo basta mettere in `.env.local`
+// Il pulsante e' attivo per impostazione predefinita. Se la registrazione su
+// Azure non e' ancora pronta si nasconde mettendo in `.env.local`
 //
-//   NEXT_PUBLIC_MICROSOFT_LOGIN=on
+//   NEXT_PUBLIC_MICROSOFT_LOGIN=off
 //
-// e ricostruire l'applicazione. Qualsiasi altro valore, o l'assenza della
-// variabile, tiene il pulsante nascosto.
-const MICROSOFT_ENABLED = ["on", "true", "1"].includes(
-  process.env.NEXT_PUBLIC_MICROSOFT_LOGIN?.trim().toLowerCase() ?? "",
-);
+// e ricostruendo l'applicazione: meglio nessun pulsante che un pulsante che
+// fallisce. Guida completa: docs/microsoft-entra-id.md
+const MICROSOFT_ENABLED =
+  process.env.NEXT_PUBLIC_MICROSOFT_LOGIN?.trim().toLowerCase() !== "off";
 
 export default function LoginPage() {
   const configured = isSupabaseConfigured();
@@ -98,9 +99,15 @@ export default function LoginPage() {
       const { error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: "azure",
         options: {
-          // `offline_access` serve a ottenere il refresh token; `email` e
-          // `profile` popolano nome e indirizzo del profilo.
-          scopes: "openid email profile offline_access",
+          // Si chiede il minimo indispensabile: nome, cognome e indirizzo.
+          // `openid` identifica l'account, `profile` porta il nome e `email`
+          // l'indirizzo - che e' poi la chiave con cui si verifica se la
+          // persona e' gia' registrata in ChamaHub.
+          //
+          // Niente `offline_access`: serviva a farsi dare da Microsoft un
+          // refresh token che l'applicazione non usa, perche' la sessione e'
+          // quella emessa da Supabase. Un permesso in meno da chiedere.
+          scopes: "openid email profile",
           redirectTo: `${window.location.origin}/auth/callback`,
         },
       });
@@ -122,13 +129,21 @@ export default function LoginPage() {
       const supabase = getSupabase();
 
       if (mode === "recovery") {
-        const { error: resetError } = await supabase.auth.resetPasswordForEmail(
-          email.trim().toLowerCase(),
-          { redirectTo: `${window.location.origin}/auth/callback` },
+        // Non si passa da `resetPasswordForEmail`: quella chiamata resta
+        // appesa finche' Supabase non riesce a spedire, e con un SMTP che non
+        // risponde il browser si prende un 504 senza sapere che fine abbia
+        // fatto la richiesta. La Edge Function risponde subito e spedisce per
+        // conto suo.
+        const result = await callPublicFunction<{ message?: string }>(
+          "request-password-reset",
+          {
+            email: email.trim().toLowerCase(),
+            redirect_to: `${window.location.origin}/auth/callback?reimposta=1`,
+          },
         );
-        if (resetError) throw resetError;
         setInfo(
-          "Se l'indirizzo e' registrato riceverai una email con le istruzioni per reimpostare la password.",
+          result?.message ??
+            "Se l'indirizzo corrisponde a un profilo attivo, riceverai a breve un'email con le istruzioni.",
         );
         setMode("password");
         return;
@@ -155,10 +170,18 @@ export default function LoginPage() {
         display: "grid",
         placeItems: "center",
         p: 2,
+        position: "relative",
+        // La sfumatura del profilo aziendale: nero blu, blu, viola, con un
+        // accenno di magenta nell'angolo. Funziona con entrambi i temi - la
+        // scheda al centro e' l'unica superficie che cambia colore.
         background:
-          "linear-gradient(160deg, #1f4e79 0%, #163a5a 45%, #0e2f4d 100%)",
+          "linear-gradient(150deg, #0A0D16 0%, #1B3B8C 38%, #4A1B7A 72%, #C238C4 100%)",
       }}
     >
+      <Box sx={{ position: "absolute", top: 12, right: 12, color: "#fff" }}>
+        <ThemeToggle />
+      </Box>
+
       <Stack spacing={3} sx={{ width: "100%", maxWidth: 460 }}>
         <Stack spacing={0.5} sx={{ alignItems: "center", color: "#fff" }}>
           <Typography variant="h1" sx={{ letterSpacing: -0.5 }}>

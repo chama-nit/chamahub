@@ -12,7 +12,7 @@ import {
   type SupabaseClient,
 } from "npm:@supabase/supabase-js@2.112.3";
 
-export type UserRole = "employee" | "manager" | "hr";
+export type UserRole = "employee" | "manager" | "hr" | "sysadmin";
 
 export interface CallerProfile {
   id: string;
@@ -60,12 +60,21 @@ export async function requireCaller(
     : "";
 
   if (!token) {
-    throw new AuthError("Token di autenticazione mancante.", 401);
+    throw new AuthError(
+      "Nessun token di autenticazione nella richiesta: esci e rientra nell'applicazione.",
+      401,
+    );
   }
 
   const { data: userData, error: userError } = await admin.auth.getUser(token);
   if (userError || !userData?.user) {
-    throw new AuthError("Token di autenticazione non valido.", 401);
+    // Caso tipico: la sessione del browser e' scaduta mentre la pagina era
+    // aperta, oppure la libreria ha inviato la chiave anonima al posto del
+    // token della persona. In entrambi i casi la cura e' la stessa.
+    throw new AuthError(
+      "Sessione scaduta o token non valido: ricarica la pagina e accedi di nuovo.",
+      401,
+    );
   }
 
   const { data: profile, error: profileError } = await admin
@@ -75,7 +84,10 @@ export async function requireCaller(
     .single();
 
   if (profileError || !profile) {
-    throw new AuthError("Profilo applicativo non trovato.", 403);
+    throw new AuthError(
+      "Nessun profilo applicativo collegato a questo accesso: rivolgiti al reparto HR.",
+      403,
+    );
   }
 
   if (!profile.is_active) {
@@ -88,10 +100,30 @@ export async function requireCaller(
   return profile as CallerProfile;
 }
 
+const ROLE_LABELS: Record<UserRole, string> = {
+  employee: "dipendente",
+  manager: "responsabile di area",
+  hr: "reparto HR",
+  sysadmin: "SystemAdmin",
+};
+
+/**
+ * Il sysadmin eredita i permessi dell'HR: chiedere "hr" significa chiedere
+ * "hr oppure sysadmin", esattamente come fa `is_hr()` nel database.
+ */
 export function requireRole(caller: CallerProfile, ...roles: UserRole[]): void {
-  if (!roles.includes(caller.role)) {
+  const allowed = roles.includes("hr")
+    ? [...roles, "sysadmin" as UserRole]
+    : roles;
+
+  if (!allowed.includes(caller.role)) {
+    // Il messaggio dice quale ruolo serviva e quale ha chi ha chiamato: senza
+    // questo dettaglio un 403 e' indistinguibile da un problema di token, e si
+    // finisce a cercare il guasto dalla parte sbagliata.
     throw new AuthError(
-      "Non hai i permessi necessari per questa operazione.",
+      `Operazione riservata a: ${
+        allowed.map((r) => ROLE_LABELS[r]).join(", ")
+      }. Il tuo profilo risulta "${ROLE_LABELS[caller.role]}".`,
       403,
     );
   }

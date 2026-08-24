@@ -6,7 +6,8 @@
 // non appartiene al reparto HR.
 // ---------------------------------------------------------------------------
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Alert from "@mui/material/Alert";
 import Avatar from "@mui/material/Avatar";
 import Box from "@mui/material/Box";
@@ -26,9 +27,12 @@ import { getSupabase } from "@/lib/supabase/client";
 import { ROLE_LABELS } from "@/lib/labels";
 import { formatDay, initials } from "@/lib/format";
 
-export default function ProfilePage() {
+function ProfileContent() {
   const { profile, refreshProfile } = useAuth();
   const toast = useToast();
+  // Arrivo dal link di recupero: la pagina si apre con l'avviso e la sezione
+  // della password in evidenza.
+  const resetting = useSearchParams().get("reimposta") !== null;
 
   // Stessa impostazione del resto dell'applicazione: i campi mostrano il dato
   // caricato finche' l'utente non li modifica, senza effetti di allineamento.
@@ -195,6 +199,13 @@ export default function ProfilePage() {
           subtitle="Serve solo se accedi con email e password. Chi entra con l'account Microsoft continua a usare le credenziali aziendali."
         >
           <Stack spacing={2}>
+            {resetting && (
+              <Alert severity="info">
+                Hai aperto il link di recupero: scegli qui la nuova password.
+                Il collegamento vale una volta sola, quindi conviene farlo
+                adesso.
+              </Alert>
+            )}
             <TextField
               label="Nuova password"
               type="password"
@@ -229,5 +240,14 @@ export default function ProfilePage() {
         </SectionCard>
       </Stack>
     </>
+  );
+}
+
+export default function ProfilePage() {
+  // useSearchParams richiede un confine di Suspense in fase di build.
+  return (
+    <Suspense fallback={null}>
+      <ProfileContent />
+    </Suspense>
   );
 }
