@@ -945,6 +945,397 @@ begin;
     'revoca: l''area revocata non e'' piu'' accessibile');
 commit;
 
+-- ===========================================================================
+-- Migrazione 19: vedere il nome di chi ti scrive
+-- ===========================================================================
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+
+  -- Elisa (3333) appartiene a Sviluppo. Marco (2222) guida Sviluppo: deve
+  -- vederlo anche se non e' un collega di area.
+  select pg_temp.assert(
+    (select count(*) from public.profiles
+      where id = '22222222-2222-2222-2222-222222222222') = 1,
+    'visibilita'': un dipendente vede chi guida la sua area');
+
+  -- L'HR non appartiene a nessuna area: prima era invisibile a tutti.
+  select pg_temp.assert(
+    (select count(*) from public.profiles
+      where id = '11111111-1111-1111-1111-111111111111') = 1,
+    'visibilita'': un dipendente vede l''HP a cui ha scritto');
+commit;
+
+-- ===========================================================================
+-- Migrazione 20: inoltro a un'altra area
+-- ===========================================================================
+-- La richiesta di Elisa e' nata in Sviluppo. Marco la inoltra ad
+-- Amministrazione, dove Enrico (4444) e' responsabile.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+  insert into public.requests (id, requester_id, recipient, category, subject, body)
+  values ('bbbb0000-0000-0000-0000-00000000000f',
+          '33333333-3333-3333-3333-333333333333',
+          'manager', 'equipment', 'Computer nuovo',
+          'Il portatile non regge piu'' le compilazioni.');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+  select pg_temp.assert(
+    (select count(*) from public.request_areas
+      where request_id = 'bbbb0000-0000-0000-0000-00000000000f' and is_origin) = 1,
+    'inoltro: l''area di origine viene registrata da sola');
+
+  select public.forward_request(
+    'bbbb0000-0000-0000-0000-00000000000f',
+    'aaaaaaaa-0000-0000-0000-000000000002',
+    'Serve il vostro benestare: sono circa 2000 euro.');
+
+  select pg_temp.assert(
+    (select count(*) from public.request_areas
+      where request_id = 'bbbb0000-0000-0000-0000-00000000000f') = 2,
+    'inoltro: l''area chiamata viene aggiunta');
+commit;
+
+-- Enrico guida Amministrazione: ora la richiesta e' anche sua.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '44444444-4444-4444-4444-444444444444';
+
+  select pg_temp.assert(
+    (select count(*) from public.requests
+      where id = 'bbbb0000-0000-0000-0000-00000000000f') = 1,
+    'inoltro: il responsabile dell''area chiamata vede la richiesta');
+
+  select pg_temp.assert(
+    public.can_read_internal_notes('bbbb0000-0000-0000-0000-00000000000f'),
+    'inoltro: il responsabile chiamato legge il canale riservato');
+
+  select pg_temp.assert(
+    (select count(*) from public.request_messages
+      where request_id = 'bbbb0000-0000-0000-0000-00000000000f'
+        and audience = 'managers') = 1,
+    'inoltro: la nota riservata e'' visibile ai responsabili');
+
+  -- Puo' a sua volta inoltrare: la catena e' ammessa.
+  select public.forward_request(
+    'bbbb0000-0000-0000-0000-00000000000f',
+    'aaaaaaaa-0000-0000-0000-000000000003',
+    null);
+  select pg_temp.assert(
+    (select count(*) from public.request_areas
+      where request_id = 'bbbb0000-0000-0000-0000-00000000000f') = 3,
+    'inoltro: l''area chiamata puo'' chiamarne un''altra');
+commit;
+
+-- Il richiedente vede l'esito ma NON il dibattito.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+
+  select pg_temp.assert(
+    not public.can_read_internal_notes('bbbb0000-0000-0000-0000-00000000000f'),
+    'inoltro: il richiedente non legge il canale riservato');
+
+  select pg_temp.assert(
+    (select count(*) from public.request_messages
+      where request_id = 'bbbb0000-0000-0000-0000-00000000000f'
+        and audience = 'managers') = 0,
+    'inoltro: la nota fra responsabili resta invisibile al richiedente');
+
+  select pg_temp.assert(
+    (select count(*) from public.request_messages
+      where request_id = 'bbbb0000-0000-0000-0000-00000000000f'
+        and is_system) = 2,
+    'inoltro: il richiedente vede i due passaggi di area');
+
+  -- E non puo' scrivere nel canale riservato.
+  select pg_temp.expect_error(
+    $q$insert into public.request_messages (request_id, author_id, body, audience)
+       values ('bbbb0000-0000-0000-0000-00000000000f',
+               '33333333-3333-3333-3333-333333333333', 'di nascosto', 'managers')$q$,
+    'inoltro: il richiedente non puo'' scrivere note riservate');
+commit;
+
+-- Chi non c'entra non vede niente.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '77777777-7777-7777-7777-777777777777';
+  select pg_temp.assert(
+    (select count(*) from public.requests
+      where id = 'bbbb0000-0000-0000-0000-00000000000f') = 0,
+    'inoltro: un estraneo non vede la richiesta');
+commit;
+
+-- ===========================================================================
+-- Migrazione 21: notifiche
+-- ===========================================================================
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+  select pg_temp.assert(
+    (select count(*) from public.notifications
+      where kind = 'request_opened') > 0,
+    'notifiche: l''apertura di una richiesta avvisa il responsabile');
+
+  select pg_temp.assert(
+    (select count(*) from public.notifications
+      where profile_id <> '22222222-2222-2222-2222-222222222222') = 0,
+    'notifiche: si vedono soltanto le proprie');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+
+  -- Elisa ha aperto la richiesta: non deve essersi notificata da sola.
+  select pg_temp.assert(
+    (select count(*) from public.notifications
+      where kind = 'request_opened') = 0,
+    'notifiche: chi compie l''azione non riceve la propria notifica');
+
+  select pg_temp.assert(
+    (select count(*) from public.notifications
+      where kind = 'request_forwarded') > 0,
+    'notifiche: il richiedente viene avvisato dell''inoltro');
+
+  select pg_temp.assert(
+    (select public.mark_notifications_read()) > 0,
+    'notifiche: si possono segnare come lette');
+
+  select pg_temp.assert(
+    (select count(*) from public.notifications where read_at is null) = 0,
+    'notifiche: dopo la lettura non restano non lette');
+commit;
+
+-- Un profilo disattivato non riceve notifiche.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+  update public.profiles set is_active = false
+  where id = '44444444-4444-4444-4444-444444444444';
+commit;
+
+-- Si azzerano le sue notifiche, si genera un evento, e si verifica che non ne
+-- sia arrivata nessuna: piu' netto che confrontare due conteggi.
+begin;
+  set local role postgres;
+  delete from public.notifications
+  where profile_id = '44444444-4444-4444-4444-444444444444';
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+  insert into public.request_messages (request_id, author_id, body)
+  values ('bbbb0000-0000-0000-0000-00000000000f',
+          '33333333-3333-3333-3333-333333333333', 'Ci sono novita''?');
+commit;
+
+begin;
+  set local role postgres;
+  select pg_temp.assert(
+    (select count(*) from public.notifications
+      where profile_id = '44444444-4444-4444-4444-444444444444') = 0,
+    'notifiche: un profilo disattivato non ne riceve piu''');
+
+  update public.profiles set is_active = true
+  where id = '44444444-4444-4444-4444-444444444444';
+commit;
+
+-- ===========================================================================
+-- Migrazione 22: modalita' manutenzione
+-- ===========================================================================
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+  select pg_temp.expect_error(
+    $q$select public.set_maintenance(true, 'prova')$q$,
+    'manutenzione: un dipendente non puo'' accenderla');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+  select pg_temp.expect_error(
+    $q$select public.set_maintenance(true, 'prova')$q$,
+    'manutenzione: nemmeno l''HR puo'' accenderla');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '66666666-6666-6666-6666-666666666666';
+  select public.set_maintenance(true, 'Aggiornamento in corso.');
+  select pg_temp.assert(
+    public.maintenance_active(),
+    'manutenzione: il SystemAdmin la accende');
+  select pg_temp.assert(
+    public.maintenance_state() ->> 'message' = 'Aggiornamento in corso.',
+    'manutenzione: il messaggio viene conservato');
+  select pg_temp.assert(
+    public.is_active_user(),
+    'manutenzione: il SystemAdmin continua a operare');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+  select pg_temp.assert(
+    not public.is_active_user(),
+    'manutenzione: un dipendente attivo risulta bloccato');
+  select pg_temp.assert(
+    (select count(*) from public.calendar_entries) = 0,
+    'manutenzione: le policy smettono di restituire dati');
+
+  -- Anche i propri dati: e' il caso che la sola condizione dentro
+  -- is_active_user() non copriva, perche' quelle policy guardano solo l'id.
+  select pg_temp.expect_error(
+    $q$insert into public.calendar_entries (profile_id, entry_date, type)
+       values ('33333333-3333-3333-3333-333333333333',
+               current_date + 60, 'office')$q$,
+    'manutenzione: non si scrive nemmeno sul proprio calendario');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+  select pg_temp.assert(
+    not public.is_active_user(),
+    'manutenzione: nemmeno l''HR opera');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '66666666-6666-6666-6666-666666666666';
+  select public.set_maintenance(false, null);
+  select pg_temp.assert(
+    not public.maintenance_active(),
+    'manutenzione: il SystemAdmin la spegne');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+  select pg_temp.assert(
+    public.is_active_user(),
+    'manutenzione: spenta, tutto torna come prima');
+commit;
+
+-- ===========================================================================
+-- Migrazione 23: la manutenzione fa uscire davvero
+-- ===========================================================================
+-- Si simulano quattro sessioni aperte: HR, responsabile, dipendente e
+-- SystemAdmin. Accendendo la manutenzione devono restare solo quelle del
+-- SystemAdmin.
+begin;
+  set local role postgres;
+  delete from auth.refresh_tokens;
+  delete from auth.sessions;
+
+  insert into auth.sessions (id, user_id) values
+    ('ffff0000-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111'),
+    ('ffff0000-0000-0000-0000-000000000002', '22222222-2222-2222-2222-222222222222'),
+    ('ffff0000-0000-0000-0000-000000000003', '33333333-3333-3333-3333-333333333333'),
+    ('ffff0000-0000-0000-0000-000000000004', '66666666-6666-6666-6666-666666666666');
+
+  insert into auth.refresh_tokens (session_id, token) values
+    ('ffff0000-0000-0000-0000-000000000003', 'token-del-dipendente'),
+    ('ffff0000-0000-0000-0000-000000000004', 'token-del-sysadmin');
+
+  select pg_temp.assert(
+    (select count(*) from auth.sessions) = 4,
+    'uscita: si parte da quattro sessioni aperte');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '66666666-6666-6666-6666-666666666666';
+  select public.set_maintenance(true, 'Aggiornamento serale.');
+commit;
+
+begin;
+  set local role postgres;
+  select pg_temp.assert(
+    (select count(*) from auth.sessions) = 1,
+    'uscita: restano solo le sessioni del SystemAdmin');
+
+  select pg_temp.assert(
+    (select user_id from auth.sessions)
+      = '66666666-6666-6666-6666-666666666666',
+    'uscita: la sessione superstite e'' quella giusta');
+
+  select pg_temp.assert(
+    (select count(*) from auth.refresh_tokens) = 1,
+    'uscita: il refresh token del dipendente e'' stato revocato');
+
+  select pg_temp.assert(
+    (select token from auth.refresh_tokens) = 'token-del-sysadmin',
+    'uscita: quello del SystemAdmin e'' rimasto');
+commit;
+
+-- Chi prova ad autenticarsi mentre la manutenzione e' attiva non ottiene una
+-- sessione utilizzabile: il trigger la scarta appena nasce.
+begin;
+  set local role postgres;
+  insert into auth.sessions (id, user_id)
+  values ('ffff0000-0000-0000-0000-000000000005',
+          '33333333-3333-3333-3333-333333333333');
+
+  select pg_temp.assert(
+    (select count(*) from auth.sessions
+      where user_id = '33333333-3333-3333-3333-333333333333') = 0,
+    'uscita: un accesso durante la manutenzione non lascia una sessione');
+
+  -- Il SystemAdmin invece deve poter rientrare.
+  insert into auth.sessions (id, user_id)
+  values ('ffff0000-0000-0000-0000-000000000006',
+          '66666666-6666-6666-6666-666666666666');
+
+  select pg_temp.assert(
+    (select count(*) from auth.sessions
+      where user_id = '66666666-6666-6666-6666-666666666666') = 2,
+    'uscita: il SystemAdmin puo'' aprire una nuova sessione');
+commit;
+
+-- Spenta la manutenzione, si torna a entrare normalmente.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '66666666-6666-6666-6666-666666666666';
+  select public.set_maintenance(false, null);
+commit;
+
+begin;
+  set local role postgres;
+  insert into auth.sessions (id, user_id)
+  values ('ffff0000-0000-0000-0000-000000000007',
+          '33333333-3333-3333-3333-333333333333');
+
+  select pg_temp.assert(
+    (select count(*) from auth.sessions
+      where user_id = '33333333-3333-3333-3333-333333333333') = 1,
+    'uscita: a manutenzione spenta le sessioni tornano a nascere');
+commit;
+
+-- Spegnere la manutenzione NON chiude sessioni: sarebbe un effetto
+-- collaterale inatteso per chi e' appena rientrato.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '66666666-6666-6666-6666-666666666666';
+  select public.set_maintenance(false, null);
+commit;
+
+begin;
+  set local role postgres;
+  select pg_temp.assert(
+    (select count(*) from auth.sessions
+      where user_id = '33333333-3333-3333-3333-333333333333') = 1,
+    'uscita: spegnerla non tocca le sessioni gia'' aperte');
+commit;
+
 \echo ''
 \echo '================================================='
 \echo ' Tutti i controlli RLS sono stati superati.'

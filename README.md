@@ -30,10 +30,13 @@ comportamento sensibile e' delegato a Supabase, in due modi complementari:
 10. [Tema chiaro e scuro](#tema-chiaro-e-scuro)
 11. [Marchio, colori e email](#marchio-colori-e-email)
 12. [Appartenenza e guida](#appartenenza-e-guida-due-cose-diverse)
-13. [Modello di sicurezza](#modello-di-sicurezza)
-14. [Anonimato del gradimento](#anonimato-del-gradimento)
-15. [Collaudo delle policy](#collaudo-delle-policy)
-16. [Scelte progettuali e limiti noti](#scelte-progettuali-e-limiti-noti)
+13. [Notifiche](#notifiche)
+14. [Inoltrare una richiesta](#inoltrare-una-richiesta)
+15. [Modalita' manutenzione](#modalita-manutenzione)
+16. [Modello di sicurezza](#modello-di-sicurezza)
+17. [Anonimato del gradimento](#anonimato-del-gradimento)
+18. [Collaudo delle policy](#collaudo-delle-policy)
+19. [Scelte progettuali e limiti noti](#scelte-progettuali-e-limiti-noti)
 
 ---
 
@@ -209,7 +212,7 @@ supabase link --project-ref <REFERENCE_ID>
 supabase db push
 ```
 
-`db push` applica in ordine i diciotto file in `supabase/migrations/`, che creano
+`db push` applica in ordine i ventitre file in `supabase/migrations/`, che creano
 tabelle, tipi, funzioni, policy RLS e i contenuti predefiniti (un modello di
 valutazione, un modello di autovalutazione e un questionario di gradimento gia'
 pronti).
@@ -594,7 +597,7 @@ public/
 docs/
   microsoft-entra-id.md   guida completa all'SSO Microsoft
 supabase/
-  migrations/             18 file, da applicare in ordine
+  migrations/             23 file, da applicare in ordine
   functions/              6 Edge Function + codice condiviso:
     _shared/brand.json      FONTE UNICA di nome, colori e logo
     _shared/email.ts        impianto e testi delle email
@@ -628,6 +631,11 @@ supabase/
 | `..._password_reset_requests.sql` | conteggio dei tentativi di recupero password |
 | `..._area_default_color.sql` | colore predefinito delle nuove aree allineato alla tavolozza Chamanit |
 | `..._multi_area_managers.sql` | un responsabile puo' guidare piu' aree: tabella `area_managers` |
+| `..._profile_visibility.sql` | si vede il nome di chi ti scrive: responsabili della propria area e autori dei messaggi |
+| `..._request_forwarding.sql` | inoltro di una richiesta ad altre aree, con canale riservato ai responsabili |
+| `..._notifications.sql` | notifiche in applicazione generate da trigger |
+| `..._maintenance_mode.sql` | modalita' manutenzione riservata al SystemAdmin |
+| `..._maintenance_logout.sql` | la manutenzione chiude le sessioni di tutti tranne i SystemAdmin |
 
 ### Le Edge Function
 
@@ -865,6 +873,118 @@ arriva**. Il secondo che ci prova trova la porta chiusa da
 `protect_evaluation_submission`, e in `submitted_by` resta scritto chi e'
 passato per primo - con piu' mani sulla stessa scheda, «chi l'ha compilata»
 smette di essere una domanda retorica.
+
+---
+
+## Notifiche
+
+Nascono da trigger sul database, mai dal browser: se il client potesse
+scriverle, chiunque potrebbe recapitare a un collega un avviso inventato. Per
+la stessa ragione `notifications` non ha nessuna policy di INSERT.
+
+| Evento | Chi viene avvisato |
+|---|---|
+| apertura di una richiesta | i responsabili delle aree coinvolte, o l'HR |
+| chiusura di una richiesta | chi l'ha aperta, e i responsabili coinvolti |
+| messaggio in conversazione | tutti gli altri partecipanti che hanno diritto di leggerlo |
+| inoltro a un'altra area | tutti, richiedente compreso |
+| apertura di una campagna | chi si ritrova una scheda o un'autovalutazione da compilare |
+| correzione di una valutazione | l'interessato |
+
+Due regole valgono ovunque, e sono scritte in un punto solo (`notify()`):
+**solo profili attivi**, e **mai a chi ha compiuto l'azione**. Notificare chi e'
+stato disattivato accumula righe che nessuno leggera'; notificare a qualcuno il
+messaggio che ha appena scritto e' il modo piu' rapido di insegnargli a
+ignorare le notifiche.
+
+La campanella si rilegge ogni minuto e a ogni ritorno in primo piano - non con
+un canale in tempo reale, che richiederebbe la replica abilitata sul progetto
+per un contatore. Aprire il pannello non segna niente come letto: si legge la
+singola notifica cliccandoci, o si azzera tutto con un comando esplicito.
+
+---
+
+## Inoltrare una richiesta
+
+Un dipendente IT chiede un computer nuovo; il responsabile IT e' d'accordo ma
+la spesa non e' sua. Da qui, «Coinvolgi un'area»: la richiesta resta **una
+sola**, con tutta la sua storia, e l'Amministrazione la vede dall'inizio.
+
+Allargare la platea non significa dare tutto a tutti. Ogni messaggio ha un
+pubblico:
+
+| | Chi lo legge |
+|---|---|
+| `everyone` | chiunque veda la richiesta, **richiedente compreso** |
+| `managers` | solo i responsabili delle aree coinvolte e l'HR |
+
+Il richiedente vede quindi **che** la richiesta e' passata all'Amministrazione
+e come e' finita - i passaggi di area sono messaggi di sistema visibili a tutti
+- ma non le valutazioni di budget che ci sono state dietro. Il canale si sceglie
+esplicitamente sopra il compositore, e il campo cambia bordo quando si sta
+scrivendo in riservato: i due errori possibili non si equivalgono, e quello
+grave e' scrivere in chiaro qualcosa che doveva restare fra responsabili.
+
+Puo' inoltrare chi gestisce la richiesta - un responsabile di un'area gia'
+coinvolta, o l'HR - e l'area chiamata puo' a sua volta chiamarne un'altra.
+
+---
+
+## Modalita' manutenzione
+
+Un interruttore nel pannello di sistema, riservato al SystemAdmin. Chi e'
+collegato si trova davanti una schermata che spiega cosa sta succedendo; chi
+prova a entrare la trova al posto del login.
+
+**La schermata non e' il blocco.** Una pagina si aggira con un ricaricamento;
+le policy no. Durante la manutenzione una policy `restrictive` su ogni tabella
+- che si somma in AND a tutte le altre - risponde "no" a chiunque non sia
+SystemAdmin: niente letture, niente scritture, nemmeno sui propri dati. La
+pagina e' la spiegazione, la policy e' il blocco.
+
+**Il SystemAdmin resta dentro**, ed e' l'unica eccezione: altrimenti
+l'interruttore sarebbe a senso unico, e per rialzarlo servirebbe una query sul
+database. Un comando che puo' rendersi irreversibile non e' un comando.
+
+### L'uscita
+
+Accendendo la manutenzione le sessioni vengono **chiuse davvero**: le righe di
+`auth.sessions` spariscono e i refresh token con loro. Chi rientra deve
+autenticarsi di nuovo, e nel frattempo trova la schermata di manutenzione al
+posto del login.
+
+Vale la pena essere precisi su cosa si puo' revocare e cosa no:
+
+| | Si revoca? |
+|---|---|
+| **refresh token** (`auth.sessions`) | si', ed e' quello che conta: senza, non si ottengono nuovi token |
+| **token di accesso** (JWT, ~1 ora) | **no, per costruzione**: e' un foglio con una firma sopra, e chi ce l'ha in mano ce l'ha |
+
+Sarebbe disonesto scrivere che il token di accesso viene invalidato. Per questo
+la sicurezza **non** poggia sull'uscita: il blocco vero resta la policy
+`restrictive`, che risponde "no" a chiunque non sia SystemAdmin qualunque token
+esibisca. Chi avesse un token ancora fresco continuerebbe a farsi riconoscere, e
+continuerebbe a non poter leggere ne' scrivere niente.
+
+L'uscita e' quindi una conseguenza voluta, non la difesa: serve perche' la
+prossima volta si passi dal login, e perche' nessuno resti con una finestra
+aperta su un'applicazione che non e' piu' sua.
+
+Chi ha la pagina gia' aperta viene fatto uscire dal browser: il contesto
+rilegge lo stato ogni mezzo minuto e, quando trova la manutenzione attiva,
+chiude la sessione locale. Il controllo su chi sia non passa dal profilo -
+durante la manutenzione le policy non lo restituiscono, e un SystemAdmin con
+una lettura fallita per un intoppo di rete verrebbe buttato fuori dall'unica
+pagina da cui puo' riaprire - ma da `is_sysadmin()`, che risponde a
+prescindere dalle policy. Nel dubbio non esce nessuno.
+
+Un trigger su `auth.sessions` scarta anche le sessioni che nascono **durante**
+la manutenzione: il login di GoTrue non passa dalle nostre policy, quindi
+qualcuno potrebbe completare un accesso fra un'accensione e uno spegnimento e
+ritrovarsi con una sessione nuova su un'applicazione chiusa.
+
+Spegnere la manutenzione non chiude niente: sarebbe un effetto collaterale
+inatteso per chi e' appena rientrato.
 
 ---
 

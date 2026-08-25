@@ -238,10 +238,21 @@ export default function MyAreaPage() {
                         value={personFilter}
                         onChange={(event) => setPersonFilter(event.target.value)}
                       >
-                        <MenuItem value="all">Tutta l&apos;area</MenuItem>
+                        <MenuItem value="all">
+                          {managedAreas.length > 1 ? "Tutte le persone" : "Tutta l'area"}
+                        </MenuItem>
                         {data?.people.map((person) => (
                           <MenuItem key={person.id} value={person.id}>
                             {person.full_name}
+                            {managedAreas.length > 1 && person.areas && (
+                              <Typography
+                                component="span"
+                                variant="caption"
+                                sx={{ ml: 1, color: "text.secondary" }}
+                              >
+                                {person.areas.name}
+                              </Typography>
+                            )}
                           </MenuItem>
                         ))}
                       </Select>
@@ -338,6 +349,10 @@ export default function MyAreaPage() {
                   <TableHead>
                     <TableRow>
                       <TableCell>Persona</TableCell>
+                      {/* Compare solo quando serve davvero a distinguere:
+                          con una sola area guidata la colonna ripeterebbe lo
+                          stesso valore su ogni riga. */}
+                      {managedAreas.length > 1 && <TableCell>Area</TableCell>}
                       <TableCell>Ruolo</TableCell>
                       <TableCell>Mansione</TableCell>
                       <TableCell>Oggi</TableCell>
@@ -368,6 +383,23 @@ export default function MyAreaPage() {
                               </Box>
                             </Stack>
                           </TableCell>
+                          {managedAreas.length > 1 && (
+                            <TableCell>
+                              {person.areas
+                                ? (
+                                  <Chip
+                                    size="small"
+                                    label={person.areas.name}
+                                    sx={{
+                                      bgcolor: `${person.areas.color}22`,
+                                      color: person.areas.color,
+                                      fontWeight: 600,
+                                    }}
+                                  />
+                                )
+                                : "—"}
+                            </TableCell>
+                          )}
                           <TableCell>{ROLE_LABELS[person.role]}</TableCell>
                           <TableCell>{person.job_title ?? "—"}</TableCell>
                           <TableCell>

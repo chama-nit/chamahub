@@ -53,6 +53,7 @@ import SentimentSatisfiedAltIcon from "@mui/icons-material/SentimentSatisfiedAlt
 import ShieldIcon from "@mui/icons-material/Shield";
 
 import ImpersonationBanner from "@/components/ImpersonationBanner";
+import NotificationBell from "@/components/NotificationBell";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { ROLE_LABELS } from "@/lib/labels";
@@ -314,6 +315,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <Box sx={{ flex: 1 }} />
 
           <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+            <NotificationBell />
             <ThemeToggle />
             <Chip
               size="small"

@@ -67,6 +67,43 @@ export interface Profile {
  * responsabile puo' comparirci piu' volte, e un'area puo' avere piu'
  * responsabili.
  */
+export type NotificationKind =
+  | "request_opened"
+  | "request_closed"
+  | "request_message"
+  | "request_forwarded"
+  | "evaluation_assigned"
+  | "evaluation_corrected";
+
+/**
+ * Una notifica in applicazione.
+ *
+ * Nasce da un trigger sul database, mai dal browser: se il client potesse
+ * scriverle, chiunque potrebbe recapitare a un collega un avviso inventato.
+ */
+export interface AppNotification {
+  id: string;
+  profile_id: string;
+  kind: NotificationKind;
+  title: string;
+  body: string | null;
+  /** Percorso interno dove porta il clic. */
+  link: string | null;
+  read_at: string | null;
+  created_at: string;
+}
+
+/** Un'area coinvolta in una richiesta. */
+export interface RequestArea {
+  request_id: string;
+  area_id: string;
+  /** Chi l'ha portata dentro. Null per l'area di origine. */
+  added_by: string | null;
+  added_at: string;
+  is_origin: boolean;
+  areas?: Pick<Area, "id" | "name" | "color"> | null;
+}
+
 export interface AreaManager {
   area_id: string;
   profile_id: string;
@@ -103,14 +140,27 @@ export interface HrRequest {
   updated_at: string;
   closed_at: string | null;
   requester?: Pick<Profile, "id" | "full_name" | "email"> | null;
-  areas?: Pick<Area, "id" | "name"> | null;
+  areas?: Pick<Area, "id" | "name" | "color"> | null;
 }
+
+/**
+ * Chi legge un messaggio.
+ *
+ * `everyone` include il richiedente; `managers` resta fra i responsabili delle
+ * aree coinvolte e l'HR. La distinzione esiste perche' dopo un inoltro le due
+ * conversazioni sono davvero due: quella con chi ha chiesto, e quella fra chi
+ * deve decidere.
+ */
+export type MessageAudience = "everyone" | "managers";
 
 export interface RequestMessage {
   id: string;
   request_id: string;
   author_id: string;
   body: string;
+  audience: MessageAudience;
+  /** Generato dall'applicazione (un inoltro), non scritto da una persona. */
+  is_system: boolean;
   created_at: string;
   author?: Pick<Profile, "id" | "full_name"> | null;
 }

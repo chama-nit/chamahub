@@ -56,7 +56,7 @@ import type {
 } from "@/lib/types/models";
 
 const SELECT =
-  "*, requester:profiles!requests_requester_id_fkey (id, full_name, email), areas:area_id (id, name)";
+  "*, requester:profiles!requests_requester_id_fkey (id, full_name, email), areas:area_id (id, name, color)";
 
 export default function RequestsPage() {
   const router = useRouter();
@@ -215,10 +215,23 @@ export default function RequestsPage() {
                         {tab === "received" && (
                           <TableCell>
                             {request.requester?.full_name ?? "—"}
+                            {/* L'area come pastiglia colorata, non come
+                                sottotitolo grigio: chi guida due aree deve
+                                poter separare le due colonne di richieste con
+                                un'occhiata, senza leggere. */}
                             {request.areas?.name && (
-                              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                                {request.areas.name}
-                              </Typography>
+                              <Chip
+                                size="small"
+                                label={request.areas.name}
+                                sx={{
+                                  mt: 0.4,
+                                  height: 20,
+                                  fontSize: "0.7rem",
+                                  fontWeight: 600,
+                                  bgcolor: `${request.areas.color ?? "#888"}22`,
+                                  color: request.areas.color ?? undefined,
+                                }}
+                              />
                             )}
                           </TableCell>
                         )}

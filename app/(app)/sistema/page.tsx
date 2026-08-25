@@ -15,6 +15,7 @@
 
 import { useMemo, useState } from "react";
 import Alert from "@mui/material/Alert";
+import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
@@ -28,6 +29,8 @@ import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import LoginIcon from "@mui/icons-material/Login";
+import BuildIcon from "@mui/icons-material/Build";
+import LockOpenIcon from "@mui/icons-material/LockOpen";
 
 import PageHeader from "@/components/PageHeader";
 import { AsyncBlock, EmptyState, SectionCard, StatCard, AutoGrid } from "@/components/ui";
@@ -53,10 +56,45 @@ interface Loaded {
 }
 
 export default function SystemPage() {
-  const { profile } = useAuth();
+  const { profile, maintenance } = useAuth();
   const toast = useToast();
   const [search, setSearch] = useState("");
   const [workingOn, setWorkingOn] = useState<string | null>(null);
+
+  // Manutenzione: lo stato arriva dal contesto, che lo rilegge da solo. Qui
+  // serve solo la copia locale del messaggio in scrittura e un blocco durante
+  // la chiamata.
+  const [messaggio, setMessaggio] = useState(maintenance.message ?? "");
+  const [busy, setBusy] = useState(false);
+
+  const manutenzione = maintenance;
+
+  async function cambiaManutenzione(attiva: boolean) {
+    setBusy(true);
+    try {
+      const supabase = getSupabase();
+      const { error: rpcError } = await supabase.rpc("set_maintenance", {
+        p_enabled: attiva,
+        p_message: messaggio.trim() || null,
+      });
+      if (rpcError) throw new Error(rpcError.message);
+
+      toast.success(
+        attiva
+          ? "Manutenzione attiva: l'applicazione e' chiusa a tutti tranne ai SystemAdmin."
+          : "Manutenzione disattivata: l'applicazione e' di nuovo aperta.",
+      );
+      // Il contesto rilegge da solo entro mezzo minuto, ma aspettare mezzo
+      // minuto per vedere l'effetto di un pulsante appena premuto e' il modo
+      // migliore per premerlo due volte. Un ricaricamento e' brusco ma
+      // inequivocabile, ed e' un'azione che si compie una volta ogni tanto.
+      window.location.reload();
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const isSysadmin = profile?.role === "sysadmin";
 
@@ -156,6 +194,66 @@ export default function SystemPage() {
               color="secondary.main"
             />
           </AutoGrid>
+
+          {/* -----------------------------------------------------------------
+              Manutenzione
+              -----------------------------------------------------------------
+              Sta in cima perche' e' l'unico comando di questa pagina che
+              cambia le cose per tutti gli altri: metterlo in fondo, sotto un
+              elenco di persone, significherebbe farlo trovare per caso.
+              ----------------------------------------------------------------- */}
+          <SectionCard
+            title="Modalita' manutenzione"
+            subtitle="Sospende l'applicazione per tutti tranne che per i SystemAdmin."
+          >
+            <Stack spacing={2}>
+              {manutenzione.enabled
+                ? (
+                  <Alert severity="warning" icon={<BuildIcon />}>
+                    <strong>La manutenzione e&apos; attiva.</strong> Nessuno
+                    puo&apos; usare l&apos;applicazione, tu compreso quando
+                    uscirai da questo pannello: il blocco vale sulle policy del
+                    database, non solo a schermo. Tu continui a lavorare
+                    normalmente perche&apos; sei un SystemAdmin.
+                  </Alert>
+                )
+                : (
+                  <Typography variant="body2" color="text.secondary">
+                    Attivandola, chi sta usando l&apos;applicazione si trova
+                    davanti una schermata che spiega cosa sta succedendo, e
+                    nessuno puo&apos; piu&apos; leggere o scrivere niente. Tu
+                    resti dentro: e&apos; l&apos;unico modo di poterla
+                    disattivare.
+                  </Typography>
+                )}
+
+              <TextField
+                label="Messaggio per chi trova l'applicazione chiusa"
+                fullWidth
+                multiline
+                minRows={2}
+                value={messaggio}
+                onChange={(event) => setMessaggio(event.target.value)}
+                disabled={busy}
+                slotProps={{ htmlInput: { maxLength: 500 } }}
+                helperText="Facoltativo. Se lo lasci vuoto viene mostrato un testo generico. E' l'unico posto in cui puoi dire quanto durera'."
+              />
+
+              <Box>
+                <Button
+                  variant="contained"
+                  color={manutenzione.enabled ? "success" : "warning"}
+                  startIcon={manutenzione.enabled ? <LockOpenIcon /> : <BuildIcon />}
+                  disabled={busy}
+                  onClick={() => cambiaManutenzione(!manutenzione.enabled)}
+                >
+                  {manutenzione.enabled
+                    ? "Riapri l'applicazione"
+                    : "Attiva la manutenzione"}
+                </Button>
+              </Box>
+            </Stack>
+          </SectionCard>
 
           <Alert severity="info">
             L&apos;impersonificazione apre una sessione a nome di un&apos;altra

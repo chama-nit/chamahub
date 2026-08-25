@@ -18,6 +18,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
+import CardContent from "@mui/material/CardContent";
 import Chip from "@mui/material/Chip";
 import LinearProgress from "@mui/material/LinearProgress";
 import Stack from "@mui/material/Stack";
@@ -34,6 +35,8 @@ import Typography from "@mui/material/Typography";
 import AssignmentIcon from "@mui/icons-material/Assignment";
 import EditNoteIcon from "@mui/icons-material/EditNote";
 import PersonIcon from "@mui/icons-material/Person";
+
+import EventBusyIcon from "@mui/icons-material/EventBusy";
 
 import PageHeader from "@/components/PageHeader";
 import { AsyncBlock, EmptyState, SectionCard } from "@/components/ui";
@@ -95,7 +98,14 @@ export default function EvaluationsPage() {
           .from("evaluations")
           .select(SELECT)
           .eq("kind", "self_assessment")
-          .eq("area_id", profile!.area_id!)
+          // `in` sulle aree guidate, non `eq` sull'area di appartenenza.
+          //
+          // Era `profile.area_id`, e per un responsabile che non appartiene a
+          // nessuna area quel valore e' null: PostgREST lo serializza come la
+          // stringa "null" e il database rispondeva
+          // `invalid input syntax for type uuid: "null"`. La condizione per
+          // mostrare la scheda guardava gia' le aree guidate, la query no.
+          .in("area_id", managedAreas.map((a) => a.id))
           .neq("subject_id", profile!.id)
           .order("created_at", { ascending: false })
           .order("id", { ascending: false })
@@ -111,7 +121,7 @@ export default function EvaluationsPage() {
       received: (received.data ?? []) as Evaluation[],
       areaSelf: (areaSelf.data ?? []) as Evaluation[],
     };
-  }, [profile?.id, profile?.area_id, canReviewArea]);
+  }, [profile?.id, managedAreas.map((a) => a.id).join(","), canReviewArea]);
 
   const groups = useMemo(() => {
     const mine = data?.mine ?? [];
@@ -129,6 +139,16 @@ export default function EvaluationsPage() {
 
   const pending = (data?.mine ?? []).filter((e) => e.status !== "submitted").length;
 
+  // Nessuna scheda da nessuna parte significa quasi sempre una cosa sola: l'HR
+  // non ha ancora aperto una campagna. Le schede non si creano da sole ne' si
+  // possono chiedere - nascono tutte all'apertura di una campagna - quindi
+  // mostrare tre tabelle vuote lascerebbe chi guarda a chiedersi se ha
+  // sbagliato qualcosa. Meglio dire com'e'.
+  const nessunaScheda = Boolean(data) &&
+    data!.mine.length === 0 &&
+    data!.received.length === 0 &&
+    data!.areaSelf.length === 0;
+
   return (
     <>
       <PageHeader
@@ -136,7 +156,19 @@ export default function EvaluationsPage() {
         description="Le schede che devi compilare e quelle che ti riguardano."
       />
 
-      <Card sx={{ mb: 3 }}>
+      {nessunaScheda && !loading && !error && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent sx={{ py: 4 }}>
+            <EmptyState
+              icon={<EventBusyIcon sx={{ fontSize: 48 }} />}
+              title="Nessuna valutazione al momento"
+              description="Le valutazioni saranno disponibili non appena il reparto HR le mettera' a disposizione. Non c'e' niente da fare da parte tua: quando una campagna verra' aperta, la scheda comparira' qui e riceverai una notifica."
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      <Card sx={{ mb: 3, display: nessunaScheda ? "none" : undefined }}>
         <Tabs
           value={tab}
           onChange={(_event, value) => setTab(value as typeof tab)}
@@ -159,7 +191,7 @@ export default function EvaluationsPage() {
       </Card>
 
       <AsyncBlock loading={loading} error={error}>
-        {tab === "todo"
+        {nessunaScheda ? null : tab === "todo"
           ? (
             <Stack spacing={3}>
               <SectionCard

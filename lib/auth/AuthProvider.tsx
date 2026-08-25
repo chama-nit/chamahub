@@ -26,6 +26,7 @@ import {
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
+import MaintenanceScreen from "@/components/MaintenanceScreen";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import type { Area, Profile, UserRole } from "@/lib/types/models";
 
@@ -46,6 +47,14 @@ interface AuthContextValue {
    * puo' vedere.
    */
   managedAreas: ManagedArea[];
+  /**
+   * Manutenzione in corso.
+   *
+   * `blocked` e' vero solo per chi ne subisce gli effetti: il SystemAdmin la
+   * vede attiva (`enabled`) ma continua a lavorare, altrimenti non potrebbe
+   * spegnerla.
+   */
+  maintenance: MaintenanceState & { blocked: boolean };
   loading: boolean;
   configured: boolean;
   refreshProfile: () => Promise<void>;
@@ -57,10 +66,37 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 /** Pagine raggiungibili senza sessione attiva. */
 const PUBLIC_ROUTES = ["/login", "/auth/callback"];
 
+/** Ogni mezzo minuto: chi ha la pagina aperta se ne accorge in fretta. */
+const MAINTENANCE_POLL_MS = 30_000;
+
 interface ProfileSlot {
   userId: string | null;
   profile: Profile | null;
   managedAreas: ManagedArea[];
+}
+
+/** Stato della manutenzione, cosi' come lo racconta il database. */
+export interface MaintenanceState {
+  enabled: boolean;
+  message: string | null;
+}
+
+async function fetchMaintenance(): Promise<MaintenanceState> {
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.rpc("maintenance_state");
+    if (error) return { enabled: false, message: null };
+    const stato = (data ?? {}) as { enabled?: boolean; message?: string | null };
+    return {
+      enabled: Boolean(stato.enabled),
+      message: stato.message ?? null,
+    };
+  } catch {
+    // Un errore qui non deve chiudere l'applicazione: nel dubbio si resta
+    // aperti. Il blocco vero e' comunque nelle policy, che non dipendono da
+    // questa lettura.
+    return { enabled: false, message: null };
+  }
 }
 
 async function fetchProfile(
@@ -118,6 +154,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     userId: null,
     profile: null,
     managedAreas: [],
+  });
+
+  // La manutenzione si rilegge da sola: chi era gia' dentro quando viene
+  // attivata deve trovarsi davanti la schermata senza dover ricaricare, ed e'
+  // l'unico modo perche' "fa uscire tutti gli utenti" sia vero anche per chi
+  // ha la pagina aperta e non la tocca.
+  const [maintenance, setMaintenance] = useState<MaintenanceState>({
+    enabled: false,
+    message: null,
   });
 
   const userId = session?.user?.id ?? null;
@@ -179,10 +224,77 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loading = !sessionResolved || profileLoading;
 
   // -------------------------------------------------------------------------
+  // Manutenzione
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (!configured) return;
+    let active = true;
+
+    const leggi = () => {
+      fetchMaintenance().then((stato) => {
+        if (active) setMaintenance(stato);
+      });
+    };
+
+    leggi();
+    const timer = setInterval(leggi, MAINTENANCE_POLL_MS);
+    const onFocus = () => leggi();
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      active = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [configured]);
+
+  const maintenanceBlocked = maintenance.enabled && profile?.role !== "sysadmin";
+
+  // -------------------------------------------------------------------------
+  // L'uscita vera
+  // -------------------------------------------------------------------------
+  // Accendendo la manutenzione il database chiude le sessioni di tutti tranne
+  // i SystemAdmin. Chi ha la pagina gia' aperta pero' non se ne accorge da
+  // solo: il suo token di accesso e' un JWT valido ancora per un'ora, e la
+  // libreria non ha motivo di rinunciarci. Qui lo si butta via.
+  //
+  // Il controllo NON si fa sul profilo. Durante la manutenzione le policy non
+  // restituiscono niente a chi e' bloccato, profilo compreso: `profile` sarebbe
+  // null tanto per un dipendente quanto per un SystemAdmin la cui lettura sia
+  // fallita per un intoppo di rete, e nel secondo caso lo si butterebbe fuori
+  // dall'unica pagina da cui puo' riaprire. Lo si chiede al database, che ha
+  // una risposta certa a prescindere dalle policy.
+  useEffect(() => {
+    if (!configured || loading || !session || !maintenance.enabled) return;
+    let active = true;
+
+    (async () => {
+      const supabase = getSupabase();
+      const { data, error } = await supabase.rpc("is_sysadmin");
+
+      // Nel dubbio non si fa uscire nessuno: la schermata copre comunque
+      // l'applicazione, e le policy bloccano comunque i dati. Un errore di
+      // rete non deve tradursi in un logout.
+      if (!active || error || data === true) return;
+
+      await supabase.auth.signOut();
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [configured, loading, session, maintenance.enabled]);
+
+  // -------------------------------------------------------------------------
   // Reindirizzamenti
   // -------------------------------------------------------------------------
   useEffect(() => {
     if (!configured || loading) return;
+
+    // Durante la manutenzione non si reindirizza da nessuna parte: la
+    // schermata prende il posto di tutto, e mandare qualcuno su /login mentre
+    // il login e' chiuso sarebbe un giro a vuoto.
+    if (maintenanceBlocked) return;
 
     const isPublic = PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
 
@@ -204,7 +316,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (profile?.is_active && pathname === "/attivazione") {
       router.replace("/dashboard");
     }
-  }, [configured, loading, session, profile, pathname, router]);
+  }, [configured, loading, session, profile, pathname, router, maintenanceBlocked]);
 
   // -------------------------------------------------------------------------
   const refreshProfile = useCallback(async () => {
@@ -226,15 +338,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile,
       role: profile?.is_active ? profile.role : null,
       managedAreas: profile?.is_active ? managedAreas : [],
+      maintenance: { ...maintenance, blocked: maintenanceBlocked },
       loading,
       configured,
       refreshProfile,
       signOut,
     }),
-    [session, profile, managedAreas, loading, configured, refreshProfile, signOut],
+    [
+      session,
+      profile,
+      managedAreas,
+      maintenance,
+      maintenanceBlocked,
+      loading,
+      configured,
+      refreshProfile,
+      signOut,
+    ],
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {/* La schermata prende il posto dell'applicazione, non si aggiunge a
+          essa: chi e' bloccato non deve poter tornare indietro con il tasto
+          del browser e trovarsi davanti una pagina vuota da cui il database
+          non restituisce niente.
+
+          Resta visibile anche dopo il logout - a sessione chiusa `profile` e'
+          null, quindi `blocked` continua a essere vero - e prende il posto
+          della pagina di accesso: chi arriva durante la manutenzione legge
+          perche' non entra, invece di sbattere contro un login che rifiuta le
+          credenziali giuste. */}
+      {value.maintenance.blocked
+        ? <MaintenanceScreen message={maintenance.message} />
+        : children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthContextValue {

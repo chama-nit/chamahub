@@ -26,7 +26,8 @@
 --   * tutti gli altri profili, HR compreso, insieme alle utenze in auth.users;
 --   * le aree, e le nomine a responsabile che le riguardano;
 --   * le comunicazioni di calendario;
---   * le richieste e le conversazioni;
+--   * le richieste, le conversazioni e le aree coinvolte;
+--   * le notifiche;
 --   * le campagne e tutte le schede di valutazione con le loro risposte;
 --   * le risposte di gradimento, i commenti e i contatori antiabuso;
 --   * il registro delle impersonificazioni e i tentativi di recupero password.
@@ -120,6 +121,7 @@ delete from public.evaluation_campaigns;
 -- 3. Richieste e calendario
 -- ---------------------------------------------------------------------------
 delete from public.request_messages;
+delete from public.request_areas;
 delete from public.requests;
 delete from public.calendar_entries;
 
@@ -130,6 +132,11 @@ delete from public.calendar_entries;
 -- piu': cancellarlo evita di conservare nomi di profili spariti.
 delete from public.impersonation_log;
 delete from public.password_reset_requests;
+
+-- Le notifiche riguardano richieste e schede che stanno per sparire: lasciarle
+-- significherebbe riempire la campanella del SystemAdmin di rimandi a pagine
+-- che non esistono piu'.
+delete from public.notifications;
 
 -- ---------------------------------------------------------------------------
 -- 5. Chi guida cosa
