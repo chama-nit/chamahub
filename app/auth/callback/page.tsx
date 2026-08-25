@@ -25,6 +25,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { describeAuthError } from "@/lib/auth/errors";
+import { isPlaceholderName, readGraphProfile } from "@/lib/auth/graph";
 import { getSupabase } from "@/lib/supabase/client";
 
 function CallbackContent() {
@@ -33,14 +34,64 @@ function CallbackContent() {
   const { session, loading } = useAuth();
   const [timedOut, setTimedOut] = useState(false);
   const [notRegistered, setNotRegistered] = useState<string | null>(null);
+  const [otpError, setOtpError] = useState<string | null>(null);
 
   const providerError = params.get("error_description") ?? params.get("error");
+  const tokenHash = params.get("token_hash");
+  const otpType = params.get("type");
 
   useEffect(() => {
     if (providerError) return;
     const timer = setTimeout(() => setTimedOut(true), 12000);
     return () => clearTimeout(timer);
   }, [providerError]);
+
+  // -------------------------------------------------------------------------
+  // Link arrivato per email (invito, reimpostazione password)
+  // -------------------------------------------------------------------------
+  // Quei link non portano una sessione gia' pronta: portano un codice monouso
+  // da scambiare. Lo scambio si fa qui, con `verifyOtp`.
+  //
+  // Prima il link puntava al verificatore di Supabase, che rimbalzava
+  // sull'applicazione con la sessione appesa al frammento dell'URL - il vecchio
+  // flusso "implicito". Il client di ChamaHub e' pero' configurato in PKCE, e
+  // davanti a un frammento del genere la libreria si ferma con «Not a valid
+  // PKCE flow url»: la pagina si caricava, girava, e non entrava mai. I due
+  // flussi non si mescolano, e PKCE non e' applicabile a un link nato sul
+  // server, che non puo' conoscere il verificatore custodito dal browser.
+  //
+  // Con `verifyOtp` non serve nessuno dei due: si presenta il codice e si
+  // ottiene la sessione.
+  useEffect(() => {
+    if (!tokenHash || !otpType) return;
+    let active = true;
+
+    (async () => {
+      const supabase = getSupabase();
+      const { error } = await supabase.auth.verifyOtp({
+        token_hash: tokenHash,
+        type: otpType as "recovery" | "invite" | "magiclink" | "signup",
+      });
+
+      if (!active) return;
+
+      if (error) {
+        setOtpError(describeAuthError(error).message);
+        return;
+      }
+
+      // Il codice e' speso: va tolto dalla barra degli indirizzi, altrimenti
+      // resta nella cronologia e in ogni link condiviso per sbaglio.
+      const pulito = new URL(window.location.href);
+      pulito.searchParams.delete("token_hash");
+      pulito.searchParams.delete("type");
+      window.history.replaceState(window.history.state, "", pulito.toString());
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [tokenHash, otpType]);
 
   useEffect(() => {
     if (loading || !session) return;
@@ -52,9 +103,33 @@ function CallbackContent() {
       const supabase = getSupabase();
       const { data } = await supabase
         .from("profiles")
-        .select("is_active")
+        .select("full_name, is_active")
         .eq("id", session.user.id)
         .maybeSingle();
+
+      if (!active) return;
+
+      // Nome e cognome veri al posto del ripiego "mario.rossi".
+      //
+      // Si fa qui, e non alla creazione del profilo, perche' il trigger sul
+      // database vede solo i claim del token - che spesso non portano il nome.
+      // Il token del provider invece vive nella sessione appena aperta, ed e'
+      // l'unico momento in cui si puo' chiedere la scheda a Microsoft Graph.
+      //
+      // Vale anche per chi non e' ancora abilitato: anzi, soprattutto per lui.
+      // L'HR lo trova nell'elenco delle attivazioni in attesa, e leggerci
+      // "Mario Rossi" invece di "m.rossi" e' la differenza fra riconoscere una
+      // persona e doverla cercare.
+      if (data && isPlaceholderName(data.full_name, session.user.email)) {
+        const graph = await readGraphProfile(session.provider_token);
+        const name = graph?.displayName?.trim();
+        if (name) {
+          await supabase
+            .from("profiles")
+            .update({ full_name: name })
+            .eq("id", session.user.id);
+        }
+      }
 
       if (!active) return;
 
@@ -79,6 +154,27 @@ function CallbackContent() {
       active = false;
     };
   }, [loading, session, router, params]);
+
+  if (otpError) {
+    return (
+      <Stack spacing={2} sx={{ alignItems: "center", maxWidth: 460, px: 3 }}>
+        <Alert severity="warning" sx={{ width: "100%" }}>
+          <strong>Questo collegamento non e&apos; piu&apos; valido.</strong>
+          <Typography variant="body2" sx={{ mt: 0.75 }}>
+            {otpError}
+          </Typography>
+          <Typography variant="body2" sx={{ mt: 0.75, opacity: 0.9 }}>
+            I collegamenti valgono una volta sola e scadono dopo un&apos;ora.
+            Puoi chiederne uno nuovo dalla pagina di accesso, con &laquo;Ho
+            dimenticato la password&raquo;.
+          </Typography>
+        </Alert>
+        <Button variant="contained" onClick={() => router.replace("/login")}>
+          Torna al login
+        </Button>
+      </Stack>
+    );
+  }
 
   if (providerError) {
     const friendly = describeAuthError(providerError);

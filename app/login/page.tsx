@@ -36,6 +36,8 @@ import {
   isSupabaseConfigured,
 } from "@/lib/supabase/client";
 import { describeAuthError, type FriendlyError } from "@/lib/auth/errors";
+import Logo from "@/components/Logo";
+import { BRAND_GRADIENT } from "@/lib/brand";
 import MicrosoftIcon from "@/components/MicrosoftIcon";
 import ThemeToggle from "@/components/ThemeToggle";
 
@@ -99,15 +101,32 @@ export default function LoginPage() {
       const { error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: "azure",
         options: {
-          // Si chiede il minimo indispensabile: nome, cognome e indirizzo.
-          // `openid` identifica l'account, `profile` porta il nome e `email`
-          // l'indirizzo - che e' poi la chiave con cui si verifica se la
-          // persona e' gia' registrata in ChamaHub.
+          // Nome, cognome e indirizzo: niente di piu'.
           //
-          // Niente `offline_access`: serviva a farsi dare da Microsoft un
-          // refresh token che l'applicazione non usa, perche' la sessione e'
-          // quella emessa da Supabase. Un permesso in meno da chiedere.
-          scopes: "openid email profile",
+          //   openid          identifica l'account
+          //   profile         porta il nome
+          //   email           porta l'indirizzo, la chiave con cui si verifica
+          //                   se la persona e' gia' registrata in ChamaHub
+          //   User.Read       permette di leggere la scheda della persona da
+          //                   Microsoft Graph. Serve perche' i claim del token
+          //                   non sono affidabili quanto sembrano: su parecchi
+          //                   tenant `email` manca del tutto e `name` arriva
+          //                   come un'unica stringa da spezzare a indovinare.
+          //                   Graph risponde con givenName, surname e mail
+          //                   separati. E' l'autorizzazione predefinita di ogni
+          //                   registrazione Entra ID: non richiede il consenso
+          //                   dell'amministratore.
+          //   offline_access  fa rilasciare anche un refresh token del
+          //                   provider. La sessione di ChamaHub resta quella di
+          //                   Supabase - questo serve solo perche' la lettura
+          //                   da Graph non smetta di funzionare quando il token
+          //                   Microsoft scade dopo un'ora.
+          //
+          // Nessuna autorizzazione di posta: il token che nasce qui vive nel
+          // browser, e un permesso di spedire email che passa dal browser e'
+          // un permesso regalato a chiunque apra gli strumenti di sviluppo.
+          // Chi spedisce e' la Edge Function, con una registrazione separata.
+          scopes: "openid email profile offline_access User.Read",
           redirectTo: `${window.location.origin}/auth/callback`,
         },
       });
@@ -175,7 +194,7 @@ export default function LoginPage() {
         // accenno di magenta nell'angolo. Funziona con entrambi i temi - la
         // scheda al centro e' l'unica superficie che cambia colore.
         background:
-          "linear-gradient(150deg, #0A0D16 0%, #1B3B8C 38%, #4A1B7A 72%, #C238C4 100%)",
+          BRAND_GRADIENT,
       }}
     >
       <Box sx={{ position: "absolute", top: 12, right: 12, color: "#fff" }}>
@@ -183,12 +202,7 @@ export default function LoginPage() {
       </Box>
 
       <Stack spacing={3} sx={{ width: "100%", maxWidth: 460 }}>
-        <Stack spacing={0.5} sx={{ alignItems: "center", color: "#fff" }}>
-          <Typography variant="h1" sx={{ letterSpacing: -0.5 }}>
-            ChamaHub
-          </Typography>
-          <Typography sx={{ opacity: 0.8 }}>Gestione del personale</Typography>
-        </Stack>
+        <Logo size={64} tone="contrast" stacked />
 
         <Card sx={{ borderRadius: 3 }}>
           <CardContent sx={{ p: 3 }}>

@@ -19,10 +19,7 @@
 //   recovery_link   -> genera un link di reimpostazione da consegnare a mano
 // ===========================================================================
 
-import {
-  createClient,
-  type SupabaseClient,
-} from "npm:@supabase/supabase-js@2.112.3";
+import { type SupabaseClient } from "npm:@supabase/supabase-js@2.112.3";
 import {
   adminClient,
   AuthError,
@@ -31,7 +28,15 @@ import {
   requireRole,
   type UserRole,
 } from "../_shared/auth.ts";
+import { inviteEmail } from "../_shared/email.ts";
+import {
+  buildOtpLink,
+  CALLBACK_PATH,
+  logOriginDecision,
+  resolveOrigin,
+} from "../_shared/links.ts";
 import { errorResponse, handlePreflight, jsonResponse } from "../_shared/cors.ts";
+import { configuredTransport, sendMail } from "../_shared/mailer.ts";
 
 interface Payload {
   action:
@@ -61,20 +66,6 @@ interface Payload {
 // possa salire da dentro l'applicazione.
 const VALID_ROLES: UserRole[] = ["employee", "manager", "hr"];
 
-/**
- * Client usato per gli invii che passano dagli endpoint pubblici di Auth.
- * Si preferisce la chiave anon, che e' quella prevista per queste rotte;
- * se non fosse disponibile si ricade sul client amministrativo.
- */
-function mailClient() {
-  const url = Deno.env.get("SUPABASE_URL")!;
-  const anon = Deno.env.get("SUPABASE_ANON_KEY");
-  if (!anon) return adminClient();
-  return createClient(url, anon, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
-
 /** Oltre questa soglia si smette di aspettare l'invio della mail. */
 const EMAIL_TIMEOUT_MS = 10_000;
 
@@ -93,38 +84,6 @@ function fromSupabaseError(error: unknown, fallback = 400): AuthError {
   const message = error instanceof Error ? error.message : String(error);
   const status = (error as { status?: number })?.status;
   return new AuthError(message, typeof status === "number" ? status : fallback);
-}
-
-/**
- * L'invio della mail passa dal server SMTP configurato nel progetto: se quello
- * non risponde, la chiamata resta appesa finche' non scatta il timeout della
- * piattaforma. Meglio arrendersi prima e dire perche'.
- */
-async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
-  // Il tipo del gestore cambia fra Deno e i tipi DOM: si usa quello
-  // dedotto da setTimeout invece di fissarlo a `number`.
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(
-              new AuthError(
-                `${label}: il server di posta non ha risposto entro ${
-                  EMAIL_TIMEOUT_MS / 1000
-                } secondi. Controlla le impostazioni SMTP del progetto Supabase (Authentication → Emails → SMTP Settings).`,
-                504,
-              ),
-            ),
-          EMAIL_TIMEOUT_MS,
-        );
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
 }
 
 function normaliseEmail(email: string): string {
@@ -270,15 +229,63 @@ Deno.serve(async (req: Request) => {
         let emailSent = false;
         let emailError: string | null = null;
 
-        if (body.send_invite) {
+        if (body.send_invite && !configuredTransport()) {
+          // Detto prima di provarci: e' una configurazione mancante, non un
+          // guasto, e l'HR ha diritto a leggerlo in questi termini invece che
+          // come l'ennesimo timeout.
+          emailError =
+            "nessun servizio di posta configurato per le Edge Function " +
+            "(secret MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET, MS_MAIL_SENDER " +
+            "per Microsoft Graph; in alternativa RESEND_API_KEY o SMTP_HOST)";
+          console.warn(`admin-users: invito non spedito - ${emailError}`);
+        } else if (body.send_invite) {
           try {
-            const { error: mailError } = await withTimeout(
-              mailClient().auth.resetPasswordForEmail(email, {
-                redirectTo: body.redirect_to,
-              }),
-              "Email non inviata",
+            // Il link si genera qui e si spedisce da qui.
+            //
+            // Prima questa riga era `resetPasswordForEmail()`, che delega tutto
+            // a Supabase: generazione E spedizione attraverso il server SMTP del
+            // progetto. Bastava che quel server non rispondesse - e verso
+            // Microsoft 365 succede al primo dettaglio fuori posto - perche' la
+            // chiamata restasse appesa fino al timeout, con l'HR davanti a una
+            // rotellina e nessuna spiegazione. `generateLink` non spedisce
+            // nulla: e' un'operazione locale al database di autenticazione, e
+            // non puo' fallire per colpa della posta.
+            const decisione = resolveOrigin(body.redirect_to);
+            logOriginDecision("admin-users invito", decisione);
+
+            const { data: link, error: linkError } = await admin.auth.admin
+              .generateLink({
+                type: "recovery",
+                email,
+                options: decisione.origin
+                  ? { redirectTo: `${decisione.origin}${CALLBACK_PATH}` }
+                  : undefined,
+              });
+            if (linkError) throw linkError;
+
+            const hashedToken = link?.properties?.hashed_token;
+            if (!hashedToken) throw new Error("link di accesso non generato");
+
+            // `reimposta=1` porta chi arriva direttamente alla scelta della
+            // password: e' l'unica cosa che deve fare al primo accesso, e la
+            // password temporanea non gliel'abbiamo mai scritta.
+            const actionLink = buildOtpLink(
+              decisione.origin,
+              hashedToken,
+              "recovery",
+              { reimposta: "1" },
             );
-            if (mailError) throw mailError;
+
+            const via = await sendMail(
+              email,
+              inviteEmail(
+                body.full_name!.trim(),
+                actionLink,
+                decisione.origin,
+              ),
+              EMAIL_TIMEOUT_MS,
+            );
+            console.info(`admin-users: invito inviato via ${via}`);
             emailSent = true;
           } catch (err) {
             emailError = err instanceof Error ? err.message : String(err);
@@ -377,15 +384,27 @@ Deno.serve(async (req: Request) => {
         // email provider"). Il link viene quindi restituito all'HR, che lo
         // consegna come preferisce: e' l'unica strada che funziona anche senza
         // SMTP configurato.
+        const scelta = resolveOrigin(body.redirect_to);
+        logOriginDecision("admin-users link manuale", scelta);
+
         const { data, error } = await admin.auth.admin.generateLink({
           type: "recovery",
           email: normaliseEmail(body.email!),
-          options: { redirectTo: body.redirect_to },
+          options: scelta.origin
+            ? { redirectTo: `${scelta.origin}${CALLBACK_PATH}` }
+            : undefined,
         });
         if (error) throw fromSupabaseError(error);
 
+        const hashed = data.properties?.hashed_token;
+
         return jsonResponse({
-          action_link: data.properties?.action_link ?? null,
+          // Anche questo link passa da `token_hash`, non da `action_link`: e'
+          // lo stesso link che finirebbe in un'email, solo consegnato a mano,
+          // e soffrirebbe dello stesso incaglio fra flusso implicito e PKCE.
+          action_link: hashed
+            ? buildOtpLink(scelta.origin, hashed, "recovery", { reimposta: "1" })
+            : null,
           expires_in_hours: 1,
         });
       }

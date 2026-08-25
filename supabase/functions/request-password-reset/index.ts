@@ -29,17 +29,16 @@
 //
 // Come si spedisce
 // ----------------
-// Due strade, scelte dai secret presenti (la prima che risulta configurata):
+// Non tramite la posta di Supabase: la spedizione vive in _shared/mailer.ts,
+// che sceglie fra Microsoft Graph, Resend e SMTP secondo i secret presenti.
+// Il perche' di quella scelta - e perche' l'SMTP di Microsoft con la password
+// di casella non e' una strada percorribile a lungo - e' spiegato li'.
 //
-//   RESEND_API_KEY + MAIL_FROM        -> API HTTPS di Resend
-//   SMTP_HOST, SMTP_PORT, SMTP_USER,  -> server SMTP aziendale
-//   SMTP_PASS, MAIL_FROM
-//
-// Senza nessuno dei due la funzione genera comunque il link e lo scrive nei
-// log (visibili solo a chi amministra il progetto), cosi' il recupero resta
-// possibile a mano mentre si sistema la posta. In quel caso resta valida la
-// strada gia' presente nell'applicazione: l'HR genera il link dalla scheda del
-// dipendente e lo consegna di persona.
+// Senza nessun canale configurato la funzione genera comunque il link e lo
+// scrive nei log (visibili solo a chi amministra il progetto), cosi' il
+// recupero resta possibile a mano mentre si sistema la posta. In quel caso
+// resta valida la strada gia' presente nell'applicazione: l'HR genera il link
+// dalla scheda del dipendente e lo consegna di persona.
 //
 // Nota di configurazione: questa funzione va pubblicata SENZA verifica del
 // token (`verify_jwt = false` in supabase/config.toml), perche' chi ha perso la
@@ -47,7 +46,15 @@
 // ===========================================================================
 
 import { adminClient, AuthError, readJson } from "../_shared/auth.ts";
+import { passwordResetEmail } from "../_shared/email.ts";
+import {
+  buildOtpLink,
+  CALLBACK_PATH,
+  logOriginDecision,
+  resolveOrigin,
+} from "../_shared/links.ts";
 import { errorResponse, handlePreflight, jsonResponse } from "../_shared/cors.ts";
+import { configuredTransport, sendMail } from "../_shared/mailer.ts";
 
 interface Payload {
   email?: string;
@@ -58,9 +65,6 @@ interface Payload {
 /** Tentativi ammessi per indirizzo in un'ora. */
 const MAX_ATTEMPTS_PER_HOUR = 3;
 
-/** Tetto di tempo per la spedizione: oltre, si rinuncia e si scrive nei log. */
-const SEND_TIMEOUT_MS = 15_000;
-
 const GENERIC_ANSWER = {
   ok: true,
   message:
@@ -69,136 +73,6 @@ const GENERIC_ANSWER = {
 
 function normaliseEmail(value: string): string {
   return value.trim().toLowerCase();
-}
-
-function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
-    promise.finally(() => {
-      if (timer !== undefined) clearTimeout(timer);
-    }),
-    new Promise<T>((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`${label}: nessuna risposta entro ${SEND_TIMEOUT_MS} ms`)),
-        SEND_TIMEOUT_MS,
-      );
-    }),
-  ]);
-}
-
-// ---------------------------------------------------------------------------
-// Testo del messaggio
-// ---------------------------------------------------------------------------
-function buildEmail(fullName: string, link: string) {
-  const name = fullName.split(" ")[0] || "";
-  const subject = "ChamaHub - reimposta la tua password";
-
-  const text = [
-    `Ciao ${name},`.trim(),
-    "",
-    "hai chiesto di reimpostare la password di ChamaHub.",
-    "Apri questo indirizzo per sceglierne una nuova:",
-    "",
-    link,
-    "",
-    "Il link vale una volta sola e scade dopo un'ora.",
-    "Se non hai chiesto tu il cambio, ignora questo messaggio: la password",
-    "attuale resta valida.",
-  ].join("\n");
-
-  const html = `<!doctype html>
-<html lang="it"><body style="margin:0;padding:24px;background:#f4f6f8;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#1c2530">
-  <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;padding:28px">
-    <h1 style="margin:0 0 16px;font-size:20px;color:#1f4e79">ChamaHub</h1>
-    <p style="margin:0 0 12px">Ciao ${name || "!"},</p>
-    <p style="margin:0 0 20px">hai chiesto di reimpostare la password. Premi il pulsante per sceglierne una nuova:</p>
-    <p style="margin:0 0 24px">
-      <a href="${link}" style="display:inline-block;background:#1f4e79;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600">Reimposta la password</a>
-    </p>
-    <p style="margin:0 0 8px;font-size:13px;color:#5a6672">Il link vale una volta sola e scade dopo un'ora.</p>
-    <p style="margin:0;font-size:13px;color:#5a6672">Se non hai chiesto tu il cambio, ignora questo messaggio: la password attuale resta valida.</p>
-  </div>
-</body></html>`;
-
-  return { subject, text, html };
-}
-
-// ---------------------------------------------------------------------------
-// Spedizione
-// ---------------------------------------------------------------------------
-async function sendWithResend(
-  to: string,
-  message: { subject: string; text: string; html: string },
-): Promise<string> {
-  const key = Deno.env.get("RESEND_API_KEY")!;
-  const from = Deno.env.get("MAIL_FROM") ?? "ChamaHub <onboarding@resend.dev>";
-
-  const response = await withTimeout(
-    fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from,
-        to: [to],
-        subject: message.subject,
-        text: message.text,
-        html: message.html,
-      }),
-    }),
-    "Resend",
-  );
-
-  if (!response.ok) {
-    throw new Error(`Resend ha risposto ${response.status}: ${await response.text()}`);
-  }
-  return "resend";
-}
-
-async function sendWithSmtp(
-  to: string,
-  message: { subject: string; text: string; html: string },
-): Promise<string> {
-  // Import dinamico: chi usa Resend non ha motivo di scaricare un client SMTP.
-  const { SMTPClient } = await import(
-    "https://deno.land/x/denomailer@1.6.0/mod.ts"
-  );
-
-  const host = Deno.env.get("SMTP_HOST")!;
-  const port = Number(Deno.env.get("SMTP_PORT") ?? 587);
-  const username = Deno.env.get("SMTP_USER") ?? "";
-  const password = Deno.env.get("SMTP_PASS") ?? "";
-  const from = Deno.env.get("MAIL_FROM") ?? username;
-
-  const client = new SMTPClient({
-    connection: {
-      hostname: host,
-      port,
-      // 465 e' la porta con TLS diretto; 587 parte in chiaro e sale con
-      // STARTTLS, che denomailer gestisce da solo.
-      tls: port === 465,
-      auth: username ? { username, password } : undefined,
-    },
-  });
-
-  try {
-    await withTimeout(
-      client.send({
-        from,
-        to,
-        subject: message.subject,
-        content: message.text,
-        html: message.html,
-      }),
-      "SMTP",
-    );
-  } finally {
-    await client.close().catch(() => {});
-  }
-
-  return `smtp (${host}:${port})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -240,35 +114,49 @@ async function process(email: string, redirectTo: string | undefined) {
     return;
   }
 
+  // L'origine si sceglie PRIMA di generare qualunque cosa: questa funzione e'
+  // pubblica, quindi `redirect_to` e' scritto da chiunque sappia l'indirizzo
+  // della funzione. Vedi la spiegazione estesa in _shared/links.ts.
+  const decisione = resolveOrigin(redirectTo);
+  logOriginDecision("reset password", decisione);
+
   const { data: link, error: linkError } = await admin.auth.admin.generateLink({
     type: "recovery",
     email,
-    options: redirectTo ? { redirectTo } : undefined,
+    options: decisione.origin
+      ? { redirectTo: `${decisione.origin}${CALLBACK_PATH}` }
+      : undefined,
   });
 
-  if (linkError || !link?.properties?.action_link) {
+  if (linkError || !link?.properties?.hashed_token) {
     console.error("reset password: generazione del link fallita:", linkError?.message);
     return;
   }
 
-  const actionLink = link.properties.action_link;
-  const message = buildEmail(profile.full_name ?? "", actionLink);
+  // Il link punta all'applicazione, non al verificatore di Supabase: il perche'
+  // e' spiegato su buildOtpLink in _shared/links.ts.
+  const actionLink = buildOtpLink(
+    decisione.origin,
+    link.properties.hashed_token,
+    "recovery",
+    { reimposta: "1" },
+  );
+  const message = passwordResetEmail(
+    profile.full_name ?? "",
+    actionLink,
+    decisione.origin,
+  );
 
-  const hasResend = Boolean(Deno.env.get("RESEND_API_KEY"));
-  const hasSmtp = Boolean(Deno.env.get("SMTP_HOST"));
-
-  if (!hasResend && !hasSmtp) {
+  if (!configuredTransport()) {
     console.warn(
-      "reset password: nessun servizio di posta configurato (RESEND_API_KEY o SMTP_HOST). " +
+      "reset password: nessun servizio di posta configurato. " +
         `Link generato, da consegnare a mano: ${actionLink}`,
     );
     return;
   }
 
   try {
-    const via = hasResend
-      ? await sendWithResend(email, message)
-      : await sendWithSmtp(email, message);
+    const via = await sendMail(email, message);
     console.info(`reset password: email inviata via ${via}`);
   } catch (err) {
     // Il link resta nei log: chi amministra puo' consegnarlo comunque, invece

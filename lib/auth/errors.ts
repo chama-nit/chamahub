@@ -24,12 +24,18 @@ const RULES: { match: RegExp; result: FriendlyError }[] = [
     },
   },
   {
-    // Guasto o cattiva configurazione del server di posta del progetto.
-    match: /sending (invite|confirmation|recovery|magic link|email)|error sending|smtp|mail server|server di posta/i,
+    // Guasto o cattiva configurazione del servizio di posta.
+    //
+    // Il suggerimento NON rimanda piu' alle impostazioni SMTP di Supabase:
+    // ChamaHub non le usa. Le email escono dalle Edge Function, che leggono i
+    // propri secret - ed e' li' che va cercato il problema. Mandare l'HR nel
+    // riquadro sbagliato gli fa perdere un pomeriggio a sistemare qualcosa che
+    // non c'entra.
+    match: /sending (invite|confirmation|recovery|magic link|email)|error sending|smtp|mail server|server di posta|servizio di posta/i,
     result: {
-      message: "Supabase non e' riuscito a inviare l'email.",
+      message: "L'email non e' partita.",
       hint:
-        "Verifica le impostazioni SMTP del progetto (Authentication → Emails → SMTP Settings): host, porta, credenziali e soprattutto il mittente, che dev'essere un indirizzo autorizzato dal provider. Nel frattempo puoi creare i dipendenti senza invito - ricevi una password temporanea da comunicare - e usare «Genera link di reimpostazione» per l'accesso.",
+        "Il servizio di posta delle Edge Function non e' configurato o non risponde. Controlla i secret (Edge Functions → Secrets): per Microsoft Graph servono MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET e MS_MAIL_SENDER, e dopo averli impostati la funzione va ridistribuita. La procedura e' in docs/email-microsoft-smtp.md. Nel frattempo puoi creare i dipendenti senza invito - ricevi una password temporanea da comunicare - e usare «Genera link di reimpostazione» per l'accesso.",
     },
   },
   {

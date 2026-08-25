@@ -17,6 +17,7 @@ import Avatar from "@mui/material/Avatar";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Divider from "@mui/material/Divider";
+import Logo from "@/components/Logo";
 import Drawer from "@mui/material/Drawer";
 import IconButton from "@mui/material/IconButton";
 import List from "@mui/material/List";
@@ -218,14 +219,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const drawerContent = (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <Toolbar sx={{ px: 2.5 }}>
-        <Stack spacing={0}>
-          <Typography variant="h4" sx={{ color: "primary.main", lineHeight: 1.2 }}>
-            ChamaHub
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            Gestione del personale
-          </Typography>
-        </Stack>
+        <Logo size={32} />
       </Toolbar>
       <Divider />
 

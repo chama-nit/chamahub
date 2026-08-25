@@ -1,11 +1,16 @@
 "use client";
 
 import { createTheme } from "@mui/material/styles";
+import { brand } from "./brand";
 
 // ---------------------------------------------------------------------------
 // Tavolozza Chamanit
 // ---------------------------------------------------------------------------
-// I colori del company profile, presi come sono:
+// I valori NON sono scritti qui: arrivano da supabase/functions/_shared/brand.json,
+// che e' la stessa fonte da cui li leggono le email. Cambiare una tinta li'
+// cambia insieme interfaccia e messaggi, invece di lasciarne una indietro.
+//
+// I colori del company profile:
 //
 //   #0A0D16  nero blu      #1B3B8C  blu           #4A1B7A  viola
 //   #C238C4  magenta       #E8865A  arancio       #F4B594  pesca
@@ -26,15 +31,7 @@ import { createTheme } from "@mui/material/styles";
 // invisibile, mentre la sua versione chiara resta lo stesso blu del marchio.
 // ---------------------------------------------------------------------------
 
-const BRAND = {
-  black: "#0A0D16",
-  blue: "#1B3B8C",
-  violet: "#4A1B7A",
-  magenta: "#C238C4",
-  orange: "#E8865A",
-  peach: "#F4B594",
-  white: "#FFFFFF",
-} as const;
+const { light, dark } = brand.colors;
 
 export const theme = createTheme({
   cssVariables: { colorSchemeSelector: "data" },
@@ -43,47 +40,47 @@ export const theme = createTheme({
     light: {
       palette: {
         primary: {
-          main: BRAND.blue,
-          light: "#3A5FC0",
-          dark: "#12275E",
-          contrastText: BRAND.white,
+          main: light.primary,
+          light: light.primaryLight,
+          dark: light.primaryDark,
+          contrastText: brand.colors.white,
         },
         secondary: {
-          main: BRAND.violet,
-          light: "#7B3FB5",
-          dark: "#33125A",
-          contrastText: BRAND.white,
+          main: light.secondary,
+          light: light.secondaryLight,
+          dark: light.secondaryDark,
+          contrastText: brand.colors.white,
         },
-        success: { main: "#197A63" },
-        info: { main: "#2F55B0" },
-        warning: { main: "#B4551F" },
-        error: { main: "#B3261E" },
-        background: { default: "#F4F5FA", paper: BRAND.white },
-        text: { primary: BRAND.black, secondary: "#59607A" },
-        divider: "rgba(10, 13, 22, 0.12)",
+        success: { main: light.success },
+        info: { main: light.info },
+        warning: { main: light.warning },
+        error: { main: light.error },
+        background: { default: light.background, paper: light.surface },
+        text: { primary: light.text, secondary: light.textMuted },
+        divider: light.divider,
       },
     },
     dark: {
       palette: {
         primary: {
-          main: "#7C9BEA",
-          light: "#A6BCF3",
-          dark: "#4A6BC0",
-          contrastText: BRAND.black,
+          main: dark.primary,
+          light: dark.primaryLight,
+          dark: dark.primaryDark,
+          contrastText: brand.colors.black,
         },
         secondary: {
-          main: "#B98BE8",
-          light: "#D2B4F2",
-          dark: "#7B3FB5",
-          contrastText: BRAND.black,
+          main: dark.secondary,
+          light: dark.secondaryLight,
+          dark: dark.secondaryDark,
+          contrastText: brand.colors.black,
         },
-        success: { main: "#58C39F" },
-        info: { main: "#8FAAF0" },
-        warning: { main: BRAND.orange },
-        error: { main: "#F2857D" },
-        background: { default: BRAND.black, paper: "#141A2B" },
-        text: { primary: "#E9ECF5", secondary: "#A2AAC2" },
-        divider: "rgba(255, 255, 255, 0.14)",
+        success: { main: dark.success },
+        info: { main: dark.info },
+        warning: { main: dark.warning },
+        error: { main: dark.error },
+        background: { default: dark.background, paper: dark.surface },
+        text: { primary: dark.text, secondary: dark.textMuted },
+        divider: dark.divider,
       },
     },
   },

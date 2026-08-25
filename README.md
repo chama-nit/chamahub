@@ -27,10 +27,11 @@ comportamento sensibile e' delegato a Supabase, in due modi complementari:
 7. [Nominare un SystemAdmin](#nominare-un-systemadmin)
 8. [Struttura del progetto](#struttura-del-progetto)
 9. [Tema chiaro e scuro](#tema-chiaro-e-scuro)
-10. [Modello di sicurezza](#modello-di-sicurezza)
-11. [Anonimato del gradimento](#anonimato-del-gradimento)
-12. [Collaudo delle policy](#collaudo-delle-policy)
-13. [Scelte progettuali e limiti noti](#scelte-progettuali-e-limiti-noti)
+10. [Marchio, colori e email](#marchio-colori-e-email)
+11. [Modello di sicurezza](#modello-di-sicurezza)
+12. [Anonimato del gradimento](#anonimato-del-gradimento)
+13. [Collaudo delle policy](#collaudo-delle-policy)
+14. [Scelte progettuali e limiti noti](#scelte-progettuali-e-limiti-noti)
 
 ---
 
@@ -247,32 +248,43 @@ l'SMTP e' rotto falliscono solo quelle:
 | Spedire l'email «imposta la password» alla creazione | si', ma e' facoltativa e il suo fallimento non blocca nulla |
 | «Genera link di reimpostazione» dalla pagina Dipendenti | no |
 | «Ho dimenticato la password» dalla pagina di login | si', ma non blocca piu' nulla: vedi qui sotto |
-| Conferma dell'indirizzo alla registrazione | si', se le conferme sono attive |
+| Conferma dell'indirizzo alla registrazione | si', se le conferme sono attive (ma ChamaHub non le usa) |
 | Tutto il resto (calendario, richieste, valutazioni, gradimento) | no |
 
 La creazione di un dipendente e' deliberatamente separata dall'invio dell'email:
 prima si crea l'account con una password temporanea - operazione che non tocca la
 posta e non puo' fallire per colpa sua - e solo dopo, se richiesto, si tenta la
-spedizione. Se il server di posta non risponde entro 10 secondi l'operazione si
+spedizione. Se il servizio di posta non risponde entro 10 secondi l'operazione si
 chiude comunque con successo, mostrando la password temporanea e un avviso che
 l'email non e' partita.
 
-Per spedire dalla casella aziendale Microsoft 365 c'e' una guida dedicata:
-[`docs/email-microsoft-smtp.md`](docs/email-microsoft-smtp.md) - con l'avvertenza
-che l'autenticazione di base su SMTP AUTH verra' disattivata da Microsoft a fine
-dicembre 2026.
+**Le email non passano dal servizio di posta di Supabase.** Le Edge Function
+generano il link con `generateLink()` - che non spedisce niente, e' un'operazione
+locale al database di autenticazione - e poi spediscono da sole tramite
+`supabase/functions/_shared/mailer.ts`, che sceglie fra Microsoft Graph, un
+servizio HTTPS e SMTP secondo i secret presenti. Il riquadro *Authentication →
+Emails → SMTP Settings* puo' restare vuoto.
 
-Il servizio email integrato di Supabase non e' pensato per la produzione: manda
-**2 messaggi all'ora** e soltanto agli indirizzi dei membri del progetto — verso
-chiunque altro fallisce con *Email address not authorized*. Per un uso reale
-serve un SMTP proprio (Resend, SES, SendGrid, il server aziendale) da impostare
-in **Authentication → Emails → SMTP Settings**.
+Il motivo e' che quel riquadro accetta host, utente e password, e nient'altro.
+Verso Microsoft 365 quella strada e' in chiusura: la password di casella smette
+di funzionare per impostazione predefinita a fine 2026, e l'unico SMTP che
+Microsoft continuera' ad accettare e' quello autenticato via OAuth, che il campo
+"password" non sa parlare. Aggiungere autorizzazioni alla registrazione Entra ID
+non cambia niente - e' proprio Supabase che non ha dove mettere un token. Graph
+ottiene lo stesso risultato con una POST HTTPS.
+
+Il secondo motivo e' piu' immediato: una chiamata che non risponde la si puo'
+interrompere e raccontare, mentre dentro il servizio di Supabase resta appesa
+fino al timeout della piattaforma. E' da li' che nasceva il `504` e il messaggio
+«il server di posta non ha risposto entro N secondi».
+
+Per spedire dalla casella aziendale Microsoft 365 c'e' una guida dedicata:
+[`docs/email-microsoft-smtp.md`](docs/email-microsoft-smtp.md).
 
 Se un'email non parte, il posto dove guardare e' **Logs → Edge Functions** nel
-Dashboard di Supabase: un `execution_time_ms` di poco superiore ai 10 secondi
-indica che il server di posta non ha risposto affatto (host o porta sbagliati,
-oppure connessione bloccata), mentre un errore immediato indica di solito
-credenziali o mittente non autorizzato.
+Dashboard di Supabase. Il log dice sempre da quale canale e' uscita
+(`invito inviato via microsoft graph (...)`) o perche' non e' uscita, e in caso
+di guasto riporta comunque il link generato, che l'HR puo' consegnare a mano.
 
 ### 6. «Ho dimenticato la password»
 
@@ -289,11 +301,19 @@ costruzione: nessuno aspetta piu' la posta.
 Come spedisce, in ordine di precedenza:
 
 ```bash
-# 1. Resend (o qualunque servizio con API HTTPS analoga)
+# 1. Microsoft Graph - consigliata se l'azienda e' su Microsoft 365.
+#    L'autorizzazione e' Mail.Send DI TIPO APPLICAZIONE su una registrazione
+#    Entra ID dedicata, diversa da quella del login: vedi docs/.
+supabase secrets set MS_TENANT_ID=<id-directory>
+supabase secrets set MS_CLIENT_ID=<id-applicazione>
+supabase secrets set MS_CLIENT_SECRET='<segreto>'
+supabase secrets set MS_MAIL_SENDER=no-reply@tuodominio.it
+
+# 2. oppure Resend (o qualunque servizio con API HTTPS analoga)
 supabase secrets set RESEND_API_KEY=re_xxx
 supabase secrets set MAIL_FROM="ChamaHub <no-reply@tuodominio.it>"
 
-# 2. oppure il server SMTP aziendale
+# 3. oppure un server SMTP che non sia Microsoft 365
 supabase secrets set SMTP_HOST=smtp.tuodominio.it
 supabase secrets set SMTP_PORT=587          # 465 per TLS diretto
 supabase secrets set SMTP_USER=no-reply@tuodominio.it
@@ -301,7 +321,11 @@ supabase secrets set SMTP_PASS=********
 supabase secrets set MAIL_FROM="ChamaHub <no-reply@tuodominio.it>"
 ```
 
-**Senza nessuno dei due** la funzione genera comunque il link e lo scrive nei
+I secret si leggono all'avvio della funzione: dopo averli impostati **va
+ridistribuita**, altrimenti continua a non vederli. Vale per entrambe le
+funzioni che spediscono, `admin-users` e `request-password-reset`.
+
+**Senza nessuno dei tre** la funzione genera comunque il link e lo scrive nei
 log della funzione, dove lo vede solo chi amministra il progetto: il recupero
 resta possibile a mano mentre si sistema la posta. Resta valida anche la strada
 gia' presente in applicazione, che non ha mai avuto bisogno di email: l'HR apre
@@ -485,18 +509,32 @@ app/
     profilo/              dati personali e cambio password
     hr/                   dipendenti, aree, calendario, modelli,
                           campagne, questionari, KPI
-components/               AppShell, calendario, costruttore domande, grafici
+  icon.svg                IL LOGO. File del committente: non si rigenera
+components/
+  Logo.tsx                il marchio a schermo, usato ovunque compaia
+  AppShell, calendario, costruttore domande, grafici
 lib/
+  brand.ts                nome, colori e logo (legge brand.json)
+  theme.ts                tema MUI costruito su quei colori
   supabase/client.ts      unico punto di contatto con il backend
   auth/AuthProvider.tsx   sessione, profilo, reindirizzamenti
   types/models.ts         modelli di dominio
   labels.ts               etichette italiane degli enum
   format.ts               date e numeri
+public/
+  logo-email.png          conversione del logo per le email (Outlook non
+  logo-email@2x.png       disegna gli SVG)
 docs/
   microsoft-entra-id.md   guida completa all'SSO Microsoft
 supabase/
   migrations/             17 file, da applicare in ordine
-  functions/              6 Edge Function + codice condiviso
+  functions/              6 Edge Function + codice condiviso:
+    _shared/brand.json      FONTE UNICA di nome, colori e logo
+    _shared/email.ts        impianto e testi delle email
+    _shared/links.ts        i link monouso che finiscono nelle email
+    _shared/mailer.ts       spedizione (Graph, Resend, SMTP)
+    _shared/auth.ts         identita' del chiamante e ruoli
+    _shared/cors.ts         intestazioni condivise
   scripts/                creazione dell'admin, promozione a HR
   tests/                  collaudo delle policy RLS e del primo avvio
 ```
@@ -533,6 +571,8 @@ supabase/
 | `manage-campaign` | generare decine di schede intestate a persone diverse richiederebbe permessi di scrittura molto ampi sul client |
 | `impersonate` | aprire una sessione a nome di un'altra persona richiede la chiave `service_role`; la funzione verifica che a chiederlo sia un SystemAdmin e scrive il registro degli accessi |
 | `request-password-reset` | genera il link di recupero con `service_role` e lo spedisce per conto proprio, senza dipendere dal servizio di posta interno; e' l'unica funzione pubblica |
+
+La spedizione vera e' in `_shared/mailer.ts`, condivisa fra `admin-users` e `request-password-reset`: sceglie fra Microsoft Graph (`Mail.Send` applicativo, consigliata), un servizio HTTPS come Resend, e SMTP con autenticazione di base, secondo i secret presenti.
 
 ---
 
@@ -607,6 +647,113 @@ colori adiacenti restano distinguibili anche con una percezione ridotta dei
 colori. Il colore non e' comunque mai l'unico portatore di identita' - la
 legenda porta nome e ultimo valore di ogni area, e la vista tabellare e' sempre
 presente.
+
+---
+
+## Marchio, colori e email
+
+Tutto quello che rende ChamaHub riconoscibile sta in **un file solo**:
+`supabase/functions/_shared/brand.json`. Nome, sottotitolo, tavolozza nei due
+gradini (chiaro e scuro), gradiente della pagina di accesso, percorsi del logo,
+piede delle email. Cambiare una tinta li' la cambia insieme nell'interfaccia e
+nei messaggi, invece di lasciarne una indietro.
+
+Vive sotto `supabase/functions/` per una ragione pratica, non estetica: deve
+raggiungere due mondi che non condividono niente - il bundle di Next e quello
+di Deno delle Edge Function. Il secondo puo' importare solo file di quella
+cartella; il primo puo' importare da qualunque punto del progetto. E' l'unico
+posto da cui li vedono entrambi.
+
+Chi lo legge:
+
+| | Da dove | Cosa ne fa |
+|---|---|---|
+| `lib/brand.ts` | applicazione | espone colori, nome e gradiente |
+| `lib/theme.ts` | applicazione | costruisce le due palette MUI |
+| `components/Logo.tsx` | applicazione | il marchio a schermo |
+| `_shared/brand.ts` | Edge Function | colori e indirizzo pubblico |
+| `_shared/email.ts` | Edge Function | intestazione e stili dei messaggi |
+
+### Il logo
+
+`app/icon.svg` e' **il file del committente**: non viene rigenerato, sostituito
+o "migliorato" da nessuna parte. Chi vuole cambiarlo sostituisce quel file.
+
+I due PNG in `public/` ne sono una conversione, e servono solo alle email:
+Outlook non disegna gli SVG, e un logo che non si vede e' peggio di nessun logo.
+Vanno rigenerati solo quando cambia l'originale.
+
+### Le email
+
+`_shared/email.ts` contiene un `renderEmail()` che disegna la cornice - logo,
+titolo, paragrafi, pulsante, note, piede - e sotto i messaggi veri e propri,
+che dicono soltanto cosa hanno da dire. Aggiungerne uno nuovo significa
+scrivere il testo, non un'altra tabella HTML.
+
+L'HTML e' volutamente arcaico (tabelle, stili in linea, misure in pixel) perche'
+deve funzionare in Outlook, che impagina con il motore di Word. Ogni messaggio
+esce in due versioni: HTML e testo semplice - quest'ultimo non e' un
+adempimento, e' cio' che leggono i lettori di schermo e cio' che i filtri
+antispam guardano per decidere se il messaggio e' legittimo.
+
+Il tema scuro arriva da una `prefers-color-scheme` nell'intestazione. Il
+supporto e' disomogeneo per natura - Apple Mail la rispetta, Gmail e Outlook a
+volte impongono la propria - quindi la versione chiara e' quella "vera": se la
+media query non arriva a destinazione il messaggio resta perfettamente
+leggibile.
+
+### I link, e da dove prendono l'indirizzo
+
+`_shared/links.ts` e' l'unico punto in cui si decide che forma ha il
+collegamento monouso che arriva alla persona. Lo usano l'invito, il recupero
+password e il link che l'HR consegna a mano: se cambia la pagina che li riceve,
+cambiano tutti e tre insieme. Chi li riceve e' `app/auth/callback/page.tsx`.
+
+**L'indirizzo nel link viene da dove viene usata l'applicazione.** Il browser
+manda `redirect_to` costruito su `window.location.origin`: chi apre ChamaHub su
+`localhost:3000` genera email che puntano a localhost, chi la apre sul dominio
+aziendale genera email che puntano li'. Non c'e' niente da configurare perche'
+funzioni.
+
+C'e' pero' qualcosa da configurare perche' sia **sicuro**, e in produzione non
+e' facoltativo:
+
+```bash
+supabase secrets set APP_URL=https://chamahub.tuodominio.it
+
+# facoltativo: altre origini ammesse, per sviluppo e collaudo
+supabase secrets set APP_URL_ALLOWLIST="http://localhost:3000,https://collaudo.tuodominio.it"
+
+supabase functions deploy admin-users
+supabase functions deploy request-password-reset
+```
+
+Il motivo: `request-password-reset` e' pubblica per necessita' - chi ha perso la
+password non ha una sessione da esibire - e il suo corpo contiene
+`redirect_to`. Un corpo pubblico e' un corpo che scrive chiunque:
+
+```
+POST /functions/v1/request-password-reset
+{ "email": "vittima@azienda.it",
+  "redirect_to": "https://sito-malevolo.example/auth/callback" }
+```
+
+Senza `APP_URL`, la vittima riceverebbe un'email **autentica** - spedita dalla
+casella aziendale vera, con SPF e DKIM in regola - il cui pulsante porta al sito
+di chi ha scritto quella richiesta, con un token valido in mano. Un clic, e
+quella pagina apre una sessione a nome della vittima.
+
+Con `APP_URL` impostato, il link non si costruisce piu' concatenando la stringa
+ricevuta: si parte da un'origine dell'elenco e sopra si rimettono percorso e
+parametri decisi dal codice. `redirect_to` puo' al massimo *scegliere* fra le
+origini ammesse, non aggiungerne, e non puo' iniettare ne' percorsi ne'
+parametri. Le richieste fuori elenco continuano a funzionare - l'email parte
+verso l'indirizzo ufficiale - e lasciano un avviso nei log.
+
+Finche' il link era `action_link` il controllo lo faceva GoTrue, confrontando
+`redirect_to` con l'elenco *Redirect URLs* del progetto. Passando a costruire
+l'indirizzo nelle Edge Function quel controllo e' uscito di scena insieme al
+resto, e andava rimesso: non lo fa piu' nessun altro.
 
 ---
 

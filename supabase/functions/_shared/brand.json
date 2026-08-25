@@ -1,0 +1,69 @@
+{
+  "_nota": "Fonte unica del marchio. Vive qui, e non in lib/, perche' deve raggiungere DUE mondi che non condividono nulla: il bundle di Next e quello di Deno delle Edge Function. Il secondo puo' importare solo file sotto supabase/functions/, mentre Next puo' importare da qualunque punto del progetto: questa cartella e' quindi l'unico posto da cui li vedono entrambi. Cambiando un valore qui cambiano insieme tema dell'applicazione, intestazioni delle email e pagina di accesso.",
+
+  "name": "ChamaHub",
+  "tagline": "Gestione del personale",
+
+  "logo": {
+    "_nota": "app/icon.svg e' il file originale, fornito da chi possiede il marchio: non va rigenerato ne' sovrascritto. I PNG in public/ ne sono una conversione, necessaria perche' Outlook non disegna gli SVG.",
+    "svg": "/icon.svg",
+    "png": "/logo-email.png",
+    "png2x": "/logo-email@2x.png",
+    "alt": "ChamaHub"
+  },
+
+  "colors": {
+    "_nota": "Tavolozza del company profile Chamanit. Ogni tinta ha due gradini: `light` per fondo chiaro, `dark` per fondo scuro. Il blu del marchio su nero blu sarebbe illeggibile, la sua versione schiarita resta lo stesso blu.",
+    "black": "#0A0D16",
+    "blue": "#1B3B8C",
+    "violet": "#4A1B7A",
+    "magenta": "#C238C4",
+    "orange": "#E8865A",
+    "peach": "#F4B594",
+    "white": "#FFFFFF",
+
+    "light": {
+      "primary": "#1B3B8C",
+      "primaryLight": "#3A5FC0",
+      "primaryDark": "#12275E",
+      "secondary": "#4A1B7A",
+      "secondaryLight": "#7B3FB5",
+      "secondaryDark": "#33125A",
+      "success": "#197A63",
+      "info": "#2F55B0",
+      "warning": "#B4551F",
+      "error": "#B3261E",
+      "background": "#F4F5FA",
+      "surface": "#FFFFFF",
+      "text": "#0A0D16",
+      "textMuted": "#59607A",
+      "divider": "rgba(10, 13, 22, 0.12)"
+    },
+
+    "dark": {
+      "primary": "#7C9BEA",
+      "primaryLight": "#A6BCF3",
+      "primaryDark": "#4A6BC0",
+      "secondary": "#B98BE8",
+      "secondaryLight": "#D2B4F2",
+      "secondaryDark": "#7B3FB5",
+      "success": "#58C39F",
+      "info": "#8FAAF0",
+      "warning": "#E8865A",
+      "error": "#F2857D",
+      "background": "#0A0D16",
+      "surface": "#141A2B",
+      "text": "#E9ECF5",
+      "textMuted": "#A2AAC2",
+      "divider": "rgba(255, 255, 255, 0.14)"
+    }
+  },
+
+  "gradient": "linear-gradient(150deg, #0A0D16 0%, #1B3B8C 38%, #4A1B7A 72%, #C238C4 100%)",
+
+  "email": {
+    "_nota": "L'indirizzo pubblico NON sta qui: e' il secret APP_URL delle Edge Function, perche' cambia da ambiente ad ambiente mentre questo file e' uguale ovunque. Vedi _shared/links.ts.",
+    "footer": "Hai ricevuto questo messaggio perche' il tuo indirizzo e' registrato in ChamaHub, il gestionale del personale. Se pensi si tratti di un errore, avvisa il reparto HR.",
+    "logoWidth": 56
+  }
+}
