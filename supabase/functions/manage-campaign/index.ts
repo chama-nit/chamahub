@@ -123,13 +123,30 @@ Deno.serve(async (req: Request) => {
 
     const profiles = (people ?? []) as ProfileRow[];
 
-    // Responsabile di riferimento per ogni area: il piu' anziano in nomina, in
-    // modo che la scelta sia deterministica anche con piu' responsabili.
-    const managerByArea = new Map<string, ProfileRow>();
-    for (const person of profiles) {
-      if (person.role !== "manager" || !person.area_id) continue;
-      if (!managerByArea.has(person.area_id)) {
-        managerByArea.set(person.area_id, person);
+    // Chi guida quale area. Dalla migrazione 18 non si ricava piu' da
+    // `role` + `area_id` - quella coppia sapeva rappresentare un responsabile
+    // di una sola area - ma si legge dall'elenco esplicito.
+    const { data: nomine, error: nomineError } = await admin
+      .from("area_managers")
+      .select("area_id, profile_id, assigned_at")
+      .in("area_id", areaIds)
+      .order("assigned_at");
+
+    if (nomineError) throw new AuthError(nomineError.message, 500);
+
+    // A un'area possono corrispondere piu' responsabili. La scheda va pero'
+    // intestata a UNO: si sceglie il primo nominato, perche' la scelta sia
+    // sempre la stessa a parita' di dati e non dipenda dall'ordine con cui il
+    // database restituisce le righe.
+    //
+    // L'intestazione non e' un'esclusiva: le policy aprono la scheda a tutti i
+    // responsabili dell'area, e vale la prima consegna. Serve solo perche' la
+    // scheda compaia nell'elenco "da compilare" di qualcuno invece che di
+    // nessuno.
+    const managerByArea = new Map<string, string>();
+    for (const nomina of (nomine ?? []) as { area_id: string; profile_id: string }[]) {
+      if (!managerByArea.has(nomina.area_id)) {
+        managerByArea.set(nomina.area_id, nomina.profile_id);
       }
     }
 
@@ -153,8 +170,8 @@ Deno.serve(async (req: Request) => {
 
       // 1. Scheda del responsabile sul dipendente.
       if (person.role === "employee") {
-        const manager = managerByArea.get(person.area_id);
-        if (!manager) {
+        const managerId = managerByArea.get(person.area_id);
+        if (!managerId) {
           warnings.push(
             `${person.full_name}: l'area non ha un responsabile, scheda non generata.`,
           );
@@ -163,7 +180,7 @@ Deno.serve(async (req: Request) => {
             campaign_id: campaign.id,
             template_id: campaign.template_id,
             subject_id: person.id,
-            evaluator_id: manager.id,
+            evaluator_id: managerId,
             area_id: person.area_id,
             kind: "manager_review",
             status: "pending",

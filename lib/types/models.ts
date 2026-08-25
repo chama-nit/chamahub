@@ -55,7 +55,24 @@ export interface Profile {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  /** Area di APPARTENENZA. Resta una sola: dice dove lavora la persona. */
   areas?: Pick<Area, "id" | "name" | "color"> | null;
+}
+
+/**
+ * Un'area guidata da qualcuno.
+ *
+ * Appartenenza e guida sono due cose diverse e vivono in due posti diversi:
+ * `profiles.area_id` dice dove lavori, questa tabella dice cosa guidi. Un
+ * responsabile puo' comparirci piu' volte, e un'area puo' avere piu'
+ * responsabili.
+ */
+export interface AreaManager {
+  area_id: string;
+  profile_id: string;
+  assigned_at: string;
+  areas?: Pick<Area, "id" | "name" | "color"> | null;
+  profiles?: Pick<Profile, "id" | "full_name" | "email"> | null;
 }
 
 export interface CalendarEntry {

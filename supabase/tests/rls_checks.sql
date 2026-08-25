@@ -50,9 +50,14 @@ insert into public.areas (id, name) values
 
 update public.profiles set role = 'hr', is_active = true
   where id = '11111111-1111-1111-1111-111111111111';
-update public.profiles set role = 'manager', is_active = true,
+update public.profiles set is_active = true,
   area_id = 'aaaaaaaa-0000-0000-0000-000000000001'
   where id = '22222222-2222-2222-2222-222222222222';
+-- Dalla migrazione 18 il ruolo `manager` non si assegna piu' a mano: si nomina
+-- la persona responsabile di un'area e il trigger allinea il ruolo.
+insert into public.area_managers (area_id, profile_id)
+values ('aaaaaaaa-0000-0000-0000-000000000001',
+        '22222222-2222-2222-2222-222222222222');
 update public.profiles set is_active = true,
   area_id = 'aaaaaaaa-0000-0000-0000-000000000001'
   where id = '33333333-3333-3333-3333-333333333333';
@@ -208,14 +213,19 @@ commit;
 begin;
   set local role authenticated;
   set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
-  update public.profiles set role = 'manager'
-  where id = '33333333-3333-3333-3333-333333333333';
+  insert into public.area_managers (area_id, profile_id)
+  values ('aaaaaaaa-0000-0000-0000-000000000001',
+          '33333333-3333-3333-3333-333333333333');
   select pg_temp.assert(
     (select role from public.profiles where id = '33333333-3333-3333-3333-333333333333')
       = 'manager',
-    'profili: l''HR puo'' nominare un responsabile');
-  update public.profiles set role = 'employee'
-  where id = '33333333-3333-3333-3333-333333333333';
+    'profili: nominando un responsabile il ruolo si allinea da solo');
+  delete from public.area_managers
+  where profile_id = '33333333-3333-3333-3333-333333333333';
+  select pg_temp.assert(
+    (select role from public.profiles where id = '33333333-3333-3333-3333-333333333333')
+      = 'employee',
+    'profili: revocata l''ultima area, il ruolo torna dipendente');
 
   select pg_temp.expect_error(
     $q$update public.profiles set role = 'employee'
@@ -536,8 +546,9 @@ commit;
 begin;
   set local role authenticated;
   set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
-  update public.profiles set role = 'manager', area_id = 'aaaaaaaa-0000-0000-0000-000000000002'
-  where id = '44444444-4444-4444-4444-444444444444';
+  insert into public.area_managers (area_id, profile_id)
+  values ('aaaaaaaa-0000-0000-0000-000000000002',
+          '44444444-4444-4444-4444-444444444444');
 commit;
 
 begin;
@@ -759,6 +770,179 @@ begin;
       where id = 'dddddddd-0000-0000-0000-000000000003')
       = '22222222-2222-2222-2222-222222222222',
     'punteggio: resta registrato chi ha corretto');
+commit;
+
+-- ===========================================================================
+-- Migrazione 18: un responsabile su piu' aree
+-- ===========================================================================
+-- Marco (2222) guida Sviluppo. Qui gli si affida anche Amministrazione, dove
+-- lavora Enrico (4444), e si verifica che veda entrambe senza che nulla trapeli
+-- da una terza area.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+  insert into public.areas (id, name)
+  values ('aaaaaaaa-0000-0000-0000-000000000003', 'Logistica');
+
+  insert into public.profiles (id, email, full_name, role, area_id, is_active)
+  select '77777777-7777-7777-7777-777777777777', 'log@example.com', 'Lucia Logistica',
+         'employee', 'aaaaaaaa-0000-0000-0000-000000000003', true
+  where false;
+commit;
+
+-- Il profilo nasce dal trigger su auth.users, non da un insert diretto.
+insert into auth.users (id, email, raw_user_meta_data)
+values ('77777777-7777-7777-7777-777777777777', 'log@example.com',
+        '{"full_name":"Lucia Logistica"}');
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+  update public.profiles set is_active = true,
+    area_id = 'aaaaaaaa-0000-0000-0000-000000000003'
+  where id = '77777777-7777-7777-7777-777777777777';
+
+  -- La seconda area a Marco.
+  insert into public.area_managers (area_id, profile_id)
+  values ('aaaaaaaa-0000-0000-0000-000000000002',
+          '22222222-2222-2222-2222-222222222222');
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+  select pg_temp.assert(
+    (select count(*) from public.current_managed_areas()) = 2,
+    'multi-area: il responsabile risulta a capo di due aree');
+
+  select pg_temp.assert(
+    public.manages_area('aaaaaaaa-0000-0000-0000-000000000001')
+    and public.manages_area('aaaaaaaa-0000-0000-0000-000000000002'),
+    'multi-area: manages_area vale per entrambe');
+
+  select pg_temp.assert(
+    not public.manages_area('aaaaaaaa-0000-0000-0000-000000000003'),
+    'multi-area: la terza area resta fuori');
+
+  select pg_temp.assert(
+    public.manages_profile('44444444-4444-4444-4444-444444444444'),
+    'multi-area: vede come propria una persona della seconda area');
+
+  select pg_temp.assert(
+    not public.manages_profile('77777777-7777-7777-7777-777777777777'),
+    'multi-area: non vede come propria una persona della terza area');
+
+  -- Calendario: le giornate di entrambe le aree, nessuna della terza.
+  select pg_temp.assert(
+    (select count(*) from public.calendar_entries
+      where area_id = 'aaaaaaaa-0000-0000-0000-000000000002') > 0,
+    'multi-area: il calendario della seconda area e'' visibile');
+
+  select pg_temp.assert(
+    (select count(*) from public.profiles
+      where area_id = 'aaaaaaaa-0000-0000-0000-000000000003') = 0,
+    'multi-area: le persone della terza area restano invisibili');
+commit;
+
+-- Il riepilogo di dashboard conta la squadra di tutte le aree guidate.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+  select pg_temp.assert(
+    (public.my_dashboard_summary() ->> 'team_size')::int >= 2,
+    'multi-area: la squadra del riepilogo copre entrambe le aree');
+
+  select pg_temp.assert(
+    jsonb_array_length(public.my_dashboard_summary() -> 'managed_area_ids') = 2,
+    'multi-area: il riepilogo elenca le due aree guidate');
+commit;
+
+-- ---------------------------------------------------------------------------
+-- Due responsabili sulla stessa area: vince la prima consegna
+-- ---------------------------------------------------------------------------
+-- Enrico (4444) guida gia' Amministrazione. Ora quell'area ha due responsabili,
+-- lui e Marco. Una scheda intestata a Enrico deve essere leggibile e
+-- modificabile anche da Marco - e chiusa a entrambi dopo la consegna.
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+  insert into public.evaluations
+    (id, campaign_id, template_id, subject_id, evaluator_id, area_id, kind, status)
+  select 'dddddddd-0000-0000-0000-000000000009',
+         e.campaign_id, e.template_id,
+         '77777777-7777-7777-7777-777777777777',
+         '44444444-4444-4444-4444-444444444444',
+         'aaaaaaaa-0000-0000-0000-000000000002',
+         'manager_review', 'draft'
+  from public.evaluations e
+  where e.kind = 'manager_review' limit 1;
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+  select pg_temp.assert(
+    (select count(*) from public.evaluations
+      where id = 'dddddddd-0000-0000-0000-000000000009') = 1,
+    'co-responsabili: la scheda di un collega della stessa area e'' visibile');
+
+  select pg_temp.assert(
+    public.can_edit_evaluation('dddddddd-0000-0000-0000-000000000009'),
+    'co-responsabili: la scheda e'' modificabile anche se intestata ad altri');
+commit;
+
+-- Consegnata: nessuno dei due puo' piu' toccarla.
+begin;
+  set local role postgres;
+  update public.evaluations
+  set status = 'submitted', submitted_at = now(),
+      submitted_by = '22222222-2222-2222-2222-222222222222'
+  where id = 'dddddddd-0000-0000-0000-000000000009';
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+  select pg_temp.assert(
+    not public.can_edit_evaluation('dddddddd-0000-0000-0000-000000000009'),
+    'co-responsabili: dopo la consegna la scheda e'' chiusa a chiunque');
+
+  select pg_temp.assert(
+    (select submitted_by from public.evaluations
+      where id = 'dddddddd-0000-0000-0000-000000000009')
+      = '22222222-2222-2222-2222-222222222222',
+    'co-responsabili: resta scritto chi ha consegnato');
+commit;
+
+-- ---------------------------------------------------------------------------
+-- Revoca di una sola area
+-- ---------------------------------------------------------------------------
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+  delete from public.area_managers
+  where profile_id = '22222222-2222-2222-2222-222222222222'
+    and area_id = 'aaaaaaaa-0000-0000-0000-000000000002';
+commit;
+
+begin;
+  set local role authenticated;
+  set local request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+  select pg_temp.assert(
+    (select count(*) from public.current_managed_areas()) = 1,
+    'revoca: resta l''altra area');
+
+  select pg_temp.assert(
+    (select role from public.profiles
+      where id = '22222222-2222-2222-2222-222222222222') = 'manager',
+    'revoca: con un''area residua il ruolo resta responsabile');
+
+  select pg_temp.assert(
+    not public.manages_area('aaaaaaaa-0000-0000-0000-000000000002'),
+    'revoca: l''area revocata non e'' piu'' accessibile');
 commit;
 
 \echo ''

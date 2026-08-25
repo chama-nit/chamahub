@@ -17,6 +17,7 @@
 //   reactivate  -> riattiva il profilo
 //   delete      -> elimina definitivamente utente e dati collegati
 //   recovery_link   -> genera un link di reimpostazione da consegnare a mano
+//   set_managed_areas -> stabilisce di quali aree la persona e' responsabile
 // ===========================================================================
 
 import { type SupabaseClient } from "npm:@supabase/supabase-js@2.112.3";
@@ -46,7 +47,8 @@ interface Payload {
     | "deactivate"
     | "reactivate"
     | "delete"
-    | "recovery_link";
+    | "recovery_link"
+    | "set_managed_areas";
   id?: string;
   email?: string;
   full_name?: string;
@@ -58,6 +60,8 @@ interface Payload {
   password?: string;
   send_invite?: boolean;
   redirect_to?: string;
+  /** Aree di cui la persona diventa responsabile. Elenco completo, non aggiunte. */
+  managed_area_ids?: string[];
 }
 
 // `sysadmin` non compare di proposito: quel ruolo non si assegna
@@ -128,6 +132,45 @@ async function assertMayTouch(
   }
 }
 
+/**
+ * Il ruolo `manager` non si assegna piu' a mano.
+ *
+ * Dalla migrazione 18 "responsabile" non e' un attributo della persona ma la
+ * conseguenza di un fatto: guidare almeno un'area. Il ruolo lo scrive un
+ * trigger quando l'elenco cambia.
+ *
+ * Lasciar passare `role: "manager"` sarebbe peggio che vietarlo: scriverebbe
+ * l'etichetta senza dare nessun potere - `is_manager()` guarda l'elenco, non il
+ * ruolo - e l'HR si ritroverebbe un responsabile che non vede la propria area,
+ * senza un solo messaggio d'errore da cui partire per capire.
+ */
+async function assertRoleChangeAllowed(
+  admin: SupabaseClient,
+  id: string,
+  role: UserRole,
+) {
+  if (role === "manager") {
+    throw new AuthError(
+      "Il ruolo di responsabile non si assegna direttamente: assegna alla persona una o piu' aree da guidare e il ruolo si aggiorna da solo.",
+      400,
+    );
+  }
+
+  if (role === "employee") {
+    const { count } = await admin
+      .from("area_managers")
+      .select("area_id", { count: "exact", head: true })
+      .eq("profile_id", id);
+
+    if ((count ?? 0) > 0) {
+      throw new AuthError(
+        "Questa persona guida ancora una o piu' aree: togli le aree e il ruolo tornera' a dipendente da solo.",
+        400,
+      );
+    }
+  }
+}
+
 async function applyProfile(
   admin: SupabaseClient,
   id: string,
@@ -139,6 +182,7 @@ async function applyProfile(
   if (body.full_name !== undefined) patch.full_name = body.full_name.trim();
   if (body.role !== undefined) {
     assert(VALID_ROLES.includes(body.role), "Ruolo non valido.");
+    await assertRoleChangeAllowed(admin, id, body.role);
     patch.role = body.role;
   }
   if (body.area_id !== undefined) patch.area_id = body.area_id || null;
@@ -373,6 +417,60 @@ Deno.serve(async (req: Request) => {
         const { error } = await admin.auth.admin.deleteUser(body.id!);
         if (error) throw fromSupabaseError(error);
         return jsonResponse({ deleted: true });
+      }
+
+      // ---------------------------------------------------------------------
+      case "set_managed_areas": {
+        assert(body.id, "Identificativo del dipendente mancante.");
+        assert(
+          Array.isArray(body.managed_area_ids),
+          "Elenco delle aree mancante.",
+        );
+        await assertMayTouch(admin, caller, body.id!);
+
+        // L'elenco arriva completo, non incrementale: si sostituisce quello
+        // esistente. E' l'unico modo di rappresentare anche la revoca senza
+        // aggiungere un'azione apposta, e rispecchia com'e' fatta
+        // l'interfaccia - una serie di caselle che si spuntano.
+        const richieste = [...new Set(body.managed_area_ids!)];
+
+        if (richieste.length > 0) {
+          const { data: esistenti, error: areaError } = await admin
+            .from("areas")
+            .select("id")
+            .in("id", richieste);
+
+          if (areaError) throw fromSupabaseError(areaError, 500);
+          assert(
+            (esistenti ?? []).length === richieste.length,
+            "Una delle aree indicate non esiste.",
+          );
+        }
+
+        const { error: deleteError } = await admin
+          .from("area_managers")
+          .delete()
+          .eq("profile_id", body.id!);
+        if (deleteError) throw fromSupabaseError(deleteError, 500);
+
+        if (richieste.length > 0) {
+          const { error: insertError } = await admin
+            .from("area_managers")
+            .insert(richieste.map((area_id) => ({ area_id, profile_id: body.id! })));
+          if (insertError) throw fromSupabaseError(insertError, 500);
+        }
+
+        // Il ruolo lo allinea il trigger sul database: qui si rilegge il
+        // profilo per restituirlo gia' aggiornato, invece di lasciare
+        // all'interfaccia il compito di indovinare com'e' finita.
+        const { data: profile, error: profileError } = await admin
+          .from("profiles")
+          .select("id, email, full_name, role, area_id, job_title, phone, hired_on, is_active")
+          .eq("id", body.id!)
+          .single();
+        if (profileError) throw fromSupabaseError(profileError, 500);
+
+        return jsonResponse({ profile, managed_area_ids: richieste });
       }
 
       // ---------------------------------------------------------------------

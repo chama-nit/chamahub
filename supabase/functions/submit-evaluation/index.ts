@@ -84,7 +84,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: evaluation, error: evaluationError } = await admin
       .from("evaluations")
-      .select("id, template_id, evaluator_id, subject_id, status, kind")
+      .select("id, template_id, evaluator_id, subject_id, status, kind, area_id")
       .eq("id", body.evaluation_id)
       .single();
 
@@ -92,8 +92,29 @@ Deno.serve(async (req: Request) => {
       throw new AuthError("Scheda non trovata.", 404);
     }
 
+    // Puo' consegnare l'intestatario, oppure - per le schede del responsabile
+    // - chiunque guidi quell'area.
+    //
+    // Dalla migrazione 18 un'area puo' avere piu' responsabili, e tutti vedono
+    // e compilano le stesse schede: pretendere che a consegnare sia
+    // l'intestatario significherebbe lasciare a meta' il lavoro di chi l'ha
+    // effettivamente svolto. Vale la prima consegna, e il `.neq("status",
+    // "submitted")` piu' sotto e' cio' che rende "prima" una parola con un
+    // significato preciso anche se due persone premono insieme.
+    let puoConsegnare = evaluation.evaluator_id === caller.id;
+
+    if (!puoConsegnare && evaluation.kind === "manager_review" && evaluation.area_id) {
+      const { data: nomina } = await admin
+        .from("area_managers")
+        .select("profile_id")
+        .eq("area_id", evaluation.area_id)
+        .eq("profile_id", caller.id)
+        .maybeSingle();
+      puoConsegnare = Boolean(nomina);
+    }
+
     assert(
-      evaluation.evaluator_id === caller.id,
+      puoConsegnare,
       "Questa scheda non e' assegnata a te.",
       403,
     );
@@ -164,13 +185,16 @@ Deno.serve(async (req: Request) => {
       .update({
         status: "submitted",
         submitted_at: new Date().toISOString(),
+        // Con piu' responsabili sulla stessa area, "chi l'ha compilata" e' una
+        // domanda con una risposta diversa da "l'intestatario".
+        submitted_by: caller.id,
         overall_score: score,
         comment: body.comment?.trim() || null,
       })
       .eq("id", evaluation.id)
       // Doppia sicurezza contro una doppia consegna in parallelo.
       .neq("status", "submitted")
-      .select("id, status, overall_score, submitted_at")
+      .select("id, status, overall_score, submitted_at, submitted_by")
       .single();
 
     if (updateError || !updated) {

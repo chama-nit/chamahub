@@ -67,7 +67,7 @@ export default function EvaluationDetailPage(
 
   const router = useRouter();
   const toast = useToast();
-  const { profile } = useAuth();
+  const { profile, managedAreas } = useAuth();
 
   // `edits` contiene solo cio' che l'utente ha toccato in questa sessione; il
   // resto viene letto dai dati caricati. Nessun effetto di sincronizzazione, e
@@ -141,10 +141,9 @@ export default function EvaluationDetailPage(
   // collaboratore, anche dopo la consegna. Le stesse condizioni sono replicate
   // nella policy RLS: qui servono solo a mostrare i comandi giusti.
   const canCorrect = Boolean(
-    profile?.role === "manager" &&
-      evaluation?.kind === "self_assessment" &&
+    evaluation?.kind === "self_assessment" &&
       evaluation?.area_id &&
-      evaluation.area_id === profile?.area_id &&
+      managedAreas.some((a) => a.id === evaluation.area_id) &&
       evaluation.subject_id !== profile?.id,
   );
 

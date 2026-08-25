@@ -25,13 +25,15 @@ comportamento sensibile e' delegato a Supabase, in due modi complementari:
 5. [Accesso con Microsoft Entra ID](#accesso-con-microsoft-entra-id)
 6. [Creare il primo utente HR](#creare-il-primo-utente-hr)
 7. [Nominare un SystemAdmin](#nominare-un-systemadmin)
-8. [Struttura del progetto](#struttura-del-progetto)
-9. [Tema chiaro e scuro](#tema-chiaro-e-scuro)
-10. [Marchio, colori e email](#marchio-colori-e-email)
-11. [Modello di sicurezza](#modello-di-sicurezza)
-12. [Anonimato del gradimento](#anonimato-del-gradimento)
-13. [Collaudo delle policy](#collaudo-delle-policy)
-14. [Scelte progettuali e limiti noti](#scelte-progettuali-e-limiti-noti)
+8. [Ripartire da zero](#ripartire-da-zero)
+9. [Struttura del progetto](#struttura-del-progetto)
+10. [Tema chiaro e scuro](#tema-chiaro-e-scuro)
+11. [Marchio, colori e email](#marchio-colori-e-email)
+12. [Appartenenza e guida](#appartenenza-e-guida-due-cose-diverse)
+13. [Modello di sicurezza](#modello-di-sicurezza)
+14. [Anonimato del gradimento](#anonimato-del-gradimento)
+15. [Collaudo delle policy](#collaudo-delle-policy)
+16. [Scelte progettuali e limiti noti](#scelte-progettuali-e-limiti-noti)
 
 ---
 
@@ -70,12 +72,31 @@ Next.js si limita a servire l'applicazione.
 
 ### Responsabile di area
 
+«Responsabile» non e' un ruolo che si assegna: e' la conseguenza di avere
+almeno un'area da guidare. L'HR affida le aree dalla scheda del dipendente, in
+«Aree da guidare», e il ruolo si aggiorna da solo - toglendo l'ultima area la
+persona torna dipendente.
+
+Le aree possono essere **piu' di una**, e un'area puo' avere **piu'
+responsabili**. Sono due cose distinte da tenere a mente:
+
+* l'**appartenenza** (`profiles.area_id`) dice dove una persona lavora, ed e'
+  sempre una sola: e' con quella che si contano gli organici e si aggregano i
+  KPI, cosi' nessuno viene contato due volte;
+* le **aree guidate** dicono cosa vede e cosa puo' fare.
+
+Si puo' quindi lavorare in Sviluppo e guidare anche Amministrazione.
+
 Tutto quanto sopra, piu':
 
-* Calendario dell'intera area, filtrabile per persona, in sola lettura.
-* Elenco delle persone dell'area con lo stato della giornata corrente.
+* Calendario di tutte le aree guidate, con un selettore per vederle una alla
+  volta o tutte insieme, filtrabile per persona, in sola lettura.
+* Elenco delle persone delle aree guidate con lo stato della giornata corrente.
 * Compilazione delle schede di valutazione dei propri collaboratori e della
-  propria autovalutazione, in due tabelle distinte.
+  propria autovalutazione, in due tabelle distinte. Quando un'area ha piu'
+  responsabili tutti vedono le stesse schede e possono compilarle: **vale la
+  prima consegnata**, e da quel momento la scheda e' chiusa per chiunque. Chi
+  ha consegnato resta scritto (`submitted_by`).
 * Revisione e correzione delle autovalutazioni dei collaboratori dell'area,
   anche dopo la consegna: ogni intervento viene marcato e mostrato al diretto
   interessato.
@@ -188,7 +209,7 @@ supabase link --project-ref <REFERENCE_ID>
 supabase db push
 ```
 
-`db push` applica in ordine i diciassette file in `supabase/migrations/`, che creano
+`db push` applica in ordine i diciotto file in `supabase/migrations/`, che creano
 tabelle, tipi, funzioni, policy RLS e i contenuti predefiniti (un modello di
 valutazione, un modello di autovalutazione e un questionario di gradimento gia'
 pronti).
@@ -491,6 +512,52 @@ browser viene chiuso a meta', alla riapertura la striscia e' ancora li'.
 
 ---
 
+## Ripartire da zero
+
+`supabase/scripts/04_svuota_dati.sql` riporta il database allo stato "appena
+installato" **senza rifare le migrazioni**: utile dopo una fase di prove, o
+prima di caricare i dati veri.
+
+```bash
+psql "$DB_URL" -f supabase/scripts/04_svuota_dati.sql
+```
+
+| Resta | Sparisce |
+|---|---|
+| i profili SystemAdmin e le loro utenze | tutti gli altri profili, **HR compreso** |
+| i modelli di scheda e le loro domande | aree, nomine a responsabile, campagne, valutazioni e risposte |
+| la definizione dei questionari di gradimento | risposte di gradimento, commenti, contatori |
+| le impostazioni di sistema | calendario, richieste, conversazioni, registri |
+
+Tre cose che vale la pena sapere prima di premere invio.
+
+**Si rifiuta di partire senza un SystemAdmin attivo.** Non e' pignoleria:
+cancellando ogni profilo senza averne uno da tenere ci si chiude fuori dalla
+propria applicazione, e per rientrare bisognerebbe rifare l'utenza dal
+database. Meglio un errore adesso.
+
+**Cancella da `auth.users`, non da `profiles`.** Il profilo ha una chiave
+esterna con `on delete cascade` verso l'utenza, quindi togliendo l'utenza se ne
+va anche il profilo; al contrario no. Cancellare il solo profilo lascerebbe
+un'utenza fantasma capace di autenticarsi ma senza nessuna riga in `profiles` -
+e soprattutto capace di occupare l'indirizzo email, impedendo di ricreare quella
+stessa persona: `admin-users` risponderebbe "utente gia' esistente" indicando
+una riga che nell'applicazione non si vede da nessuna parte.
+
+**E' tutto in una transazione.** Se qualcosa va storto a meta' strada non resta
+un database mezzo vuoto: torna tutto com'era. Alla fine tre controlli
+verificano che sia rimasto esattamente un insieme di soli SystemAdmin e nessuna
+nomina a responsabile, e in caso contrario annullano.
+
+Dopo la pulizia, i responsabili si ricreano assegnando le aree dalla scheda del
+dipendente: il ruolo non si sceglie dal menu a tendina (vedi
+[Appartenenza e guida](#appartenenza-e-guida-due-cose-diverse)).
+
+Non c'e' cestino e non c'e' annulla: prima di eseguirlo su qualcosa di reale,
+`pg_dump` o un backup dal Dashboard.
+
+---
+
 ## Struttura del progetto
 
 ```
@@ -527,7 +594,7 @@ public/
 docs/
   microsoft-entra-id.md   guida completa all'SSO Microsoft
 supabase/
-  migrations/             17 file, da applicare in ordine
+  migrations/             18 file, da applicare in ordine
   functions/              6 Edge Function + codice condiviso:
     _shared/brand.json      FONTE UNICA di nome, colori e logo
     _shared/email.ts        impianto e testi delle email
@@ -535,7 +602,7 @@ supabase/
     _shared/mailer.ts       spedizione (Graph, Resend, SMTP)
     _shared/auth.ts         identita' del chiamante e ruoli
     _shared/cors.ts         intestazioni condivise
-  scripts/                creazione dell'admin, promozione a HR
+  scripts/                admin, promozione a HR, svuotamento dei dati
   tests/                  collaudo delle policy RLS e del primo avvio
 ```
 
@@ -560,6 +627,7 @@ supabase/
 | `..._sysadmin_permissions.sql` | permessi del SystemAdmin e registro delle impersonificazioni |
 | `..._password_reset_requests.sql` | conteggio dei tentativi di recupero password |
 | `..._area_default_color.sql` | colore predefinito delle nuove aree allineato alla tavolozza Chamanit |
+| `..._multi_area_managers.sql` | un responsabile puo' guidare piu' aree: tabella `area_managers` |
 
 ### Le Edge Function
 
@@ -754,6 +822,49 @@ Finche' il link era `action_link` il controllo lo faceva GoTrue, confrontando
 `redirect_to` con l'elenco *Redirect URLs* del progetto. Passando a costruire
 l'indirizzo nelle Edge Function quel controllo e' uscito di scena insieme al
 resto, e andava rimesso: non lo fa piu' nessun altro.
+
+---
+
+## Appartenenza e guida: due cose diverse
+
+E' la distinzione su cui poggia tutto il modello dei permessi, e vale la pena
+tenerla a mente perche' i nomi si somigliano.
+
+| | Dove vive | Quante | A cosa serve |
+|---|---|---|---|
+| **Appartenenza** | `profiles.area_id` | una sola | dove lavori: organico, KPI, a chi arriva la tua richiesta, a quale area viene attribuita la tua scheda |
+| **Guida** | `area_managers` | zero, una o piu' | cosa vedi e cosa puoi fare: calendario, richieste, valutazioni |
+
+Fino alla migrazione 18 erano la stessa cosa: «responsabile dell'area X» si
+deduceva da `role = 'manager'` insieme a `area_id = X`. Comodo, e sbagliato
+appena la realta' smette di collaborare - una persona ha una sola area di
+appartenenza, quindi poteva guidarne una sola.
+
+Il ruolo `manager` resta visibile in anagrafica, ma non e' piu' lui a dire chi
+guida cosa: lo dice l'elenco, e un trigger tiene il ruolo allineato. Per questo
+l'interfaccia non permette piu' di assegnare «Responsabile» dal menu a tendina,
+e la Edge Function lo rifiuta esplicitamente: scrivere quell'etichetta senza
+affidare un'area produrrebbe un responsabile che non vede la propria area,
+senza un solo messaggio d'errore da cui partire per capire.
+
+Le funzioni da conoscere, se si mette mano alle policy:
+
+| Funzione | Risponde a |
+|---|---|
+| `current_area_id()` | a quale area appartengo |
+| `current_managed_areas()` | quali aree guido |
+| `manages_area(uuid)` | guido quest'area? |
+| `manages_profile(uuid)` | guido l'area di questa persona? |
+| `is_manager()` | guido almeno un'area? |
+
+### Piu' responsabili sulla stessa area
+
+E' permesso, ed e' voluto. Tutti vedono e possono compilare le schede dei
+dipendenti di quell'area; la consegna e' irreversibile e **vale la prima che
+arriva**. Il secondo che ci prova trova la porta chiusa da
+`protect_evaluation_submission`, e in `submitted_by` resta scritto chi e'
+passato per primo - con piu' mani sulla stessa scheda, «chi l'ha compilata»
+smette di essere una domanda retorica.
 
 ---
 

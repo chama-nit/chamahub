@@ -27,12 +27,25 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
-import type { Profile, UserRole } from "@/lib/types/models";
+import type { Area, Profile, UserRole } from "@/lib/types/models";
+
+/** Un'area guidata da chi sta usando l'applicazione. */
+export type ManagedArea = Pick<Area, "id" | "name" | "color">;
 
 interface AuthContextValue {
   session: Session | null;
   profile: Profile | null;
   role: UserRole | null;
+  /**
+   * Le aree che questa persona guida.
+   *
+   * Vuoto per chi non ne guida nessuna. NON coincide con `profile.area_id`,
+   * che e' l'area di appartenenza: un responsabile puo' lavorare in Sviluppo e
+   * guidare anche Amministrazione, e le due informazioni servono a cose
+   * diverse - la prima per il proprio calendario, la seconda per decidere cosa
+   * puo' vedere.
+   */
+  managedAreas: ManagedArea[];
   loading: boolean;
   configured: boolean;
   refreshProfile: () => Promise<void>;
@@ -47,22 +60,50 @@ const PUBLIC_ROUTES = ["/login", "/auth/callback"];
 interface ProfileSlot {
   userId: string | null;
   profile: Profile | null;
+  managedAreas: ManagedArea[];
 }
 
-async function fetchProfile(userId: string): Promise<Profile | null> {
+async function fetchProfile(
+  userId: string,
+): Promise<{ profile: Profile | null; managedAreas: ManagedArea[] }> {
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("*, areas:area_id (id, name, color)")
-    .eq("id", userId)
-    .maybeSingle();
 
-  if (error) {
-    console.error("Lettura del profilo non riuscita:", error.message);
-    return null;
+  // Le due letture sono indipendenti: si fanno insieme invece che in fila.
+  const [profileRes, areasRes] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("*, areas:area_id (id, name, color)")
+      .eq("id", userId)
+      .maybeSingle(),
+    supabase
+      .from("area_managers")
+      .select("areas:area_id (id, name, color)")
+      .eq("profile_id", userId),
+  ]);
+
+  if (profileRes.error) {
+    console.error("Lettura del profilo non riuscita:", profileRes.error.message);
+    return { profile: null, managedAreas: [] };
   }
 
-  return (data as Profile) ?? null;
+  if (areasRes.error) {
+    // Non blocca l'accesso: senza questo elenco la persona vede l'applicazione
+    // come un dipendente, che e' il fallimento meno dannoso.
+    console.error("Lettura delle aree guidate non riuscita:", areasRes.error.message);
+  }
+
+  // I tipi generati descrivono la relazione come un array perche' non sanno
+  // che `area_id` e' una chiave singola: a runtime arriva un oggetto solo.
+  // Si normalizzano entrambe le forme invece di fidarsi dell'una o dell'altra.
+  const managedAreas = ((areasRes.data ?? []) as unknown[])
+    .flatMap((riga) => {
+      const campo = (riga as { areas?: ManagedArea | ManagedArea[] | null }).areas;
+      if (!campo) return [];
+      return Array.isArray(campo) ? campo : [campo];
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "it"));
+
+  return { profile: (profileRes.data as Profile) ?? null, managedAreas };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -73,7 +114,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   // Se la configurazione manca non c'e' nulla da risolvere: si parte gia' pronti.
   const [sessionResolved, setSessionResolved] = useState(!configured);
-  const [slot, setSlot] = useState<ProfileSlot>({ userId: null, profile: null });
+  const [slot, setSlot] = useState<ProfileSlot>({
+    userId: null,
+    profile: null,
+    managedAreas: [],
+  });
 
   const userId = session?.user?.id ?? null;
 
@@ -113,8 +158,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!configured || !userId) return;
     let active = true;
 
-    fetchProfile(userId).then((profile) => {
-      if (active) setSlot({ userId, profile });
+    fetchProfile(userId).then(({ profile, managedAreas }) => {
+      if (active) setSlot({ userId, profile, managedAreas });
     });
 
     return () => {
@@ -124,6 +169,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Il profilo vale solo se appartiene all'utente della sessione corrente.
   const profile = userId && slot.userId === userId ? slot.profile : null;
+  // Dentro useMemo, non fuori: un array letterale ricreato a ogni render
+  // farebbe scattare tutte le dipendenze che lo osservano.
+  const managedAreas = useMemo(
+    () => (userId && slot.userId === userId ? slot.managedAreas : []),
+    [userId, slot],
+  );
   const profileLoading = Boolean(userId) && slot.userId !== userId;
   const loading = !sessionResolved || profileLoading;
 
@@ -159,13 +210,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshProfile = useCallback(async () => {
     if (!userId) return;
     const next = await fetchProfile(userId);
-    setSlot({ userId, profile: next });
+    setSlot({ userId, profile: next.profile, managedAreas: next.managedAreas });
   }, [userId]);
 
   const signOut = useCallback(async () => {
     const supabase = getSupabase();
     await supabase.auth.signOut();
-    setSlot({ userId: null, profile: null });
+    setSlot({ userId: null, profile: null, managedAreas: [] });
     router.replace("/login");
   }, [router]);
 
@@ -174,12 +225,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       profile,
       role: profile?.is_active ? profile.role : null,
+      managedAreas: profile?.is_active ? managedAreas : [],
       loading,
       configured,
       refreshProfile,
       signOut,
     }),
-    [session, profile, loading, configured, refreshProfile, signOut],
+    [session, profile, managedAreas, loading, configured, refreshProfile, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

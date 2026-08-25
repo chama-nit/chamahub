@@ -75,6 +75,8 @@ interface Loaded {
   campaignAreas: { campaign_id: string; area_id: string }[];
   /** Persone attive con un'area: servono a stimare le schede di una bozza. */
   people: { id: string; role: string; area_id: string | null }[];
+  /** Aree che hanno almeno un responsabile: senza, non nascono schede. */
+  areasWithManager: Set<string>;
 }
 
 interface DraftState {
@@ -123,7 +125,7 @@ export default function HrCampaignsPage() {
   const { data, loading, error, reload } = useAsync<Loaded>(async () => {
     const supabase = getSupabase();
 
-    const [campaigns, templates, areas, evaluations, campaignAreas, people] =
+    const [campaigns, templates, areas, evaluations, campaignAreas, people, nomine] =
       await Promise.all([
       supabase
         .from("evaluation_campaigns")
@@ -142,10 +144,13 @@ export default function HrCampaignsPage() {
         .from("profiles")
         .select("id, role, area_id")
         .eq("is_active", true),
+      supabase.from("area_managers").select("area_id"),
     ]);
 
     for (
-      const result of [campaigns, templates, areas, evaluations, campaignAreas, people]
+      const result of [
+        campaigns, templates, areas, evaluations, campaignAreas, people, nomine,
+      ]
     ) {
       if (result.error) throw new Error(result.error.message);
     }
@@ -157,6 +162,12 @@ export default function HrCampaignsPage() {
       evaluations: (evaluations.data ?? []) as Loaded["evaluations"],
       campaignAreas: (campaignAreas.data ?? []) as Loaded["campaignAreas"],
       people: (people.data ?? []) as Loaded["people"],
+      // Un'area ha un responsabile se compare qui, non se qualcuno con ruolo
+      // "manager" ci appartiene: dalla migrazione 18 le due cose non
+      // coincidono piu'.
+      areasWithManager: new Set(
+        ((nomine.data ?? []) as { area_id: string }[]).map((n) => n.area_id),
+      ),
     };
   }, []);
 
@@ -182,16 +193,14 @@ export default function HrCampaignsPage() {
         (person) => person.area_id && areaIds.includes(person.area_id),
       );
 
-      const areasWithManager = new Set(
-        involved.filter((p) => p.role === "manager").map((p) => p.area_id),
-      );
+      const areasWithManager = data?.areasWithManager ?? new Set<string>();
 
       const reviews = involved.filter(
-        (p) => p.role === "employee" && areasWithManager.has(p.area_id),
+        (p) => p.role === "employee" && areasWithManager.has(p.area_id ?? ""),
       ).length;
 
       const orphans = involved.filter(
-        (p) => p.role === "employee" && !areasWithManager.has(p.area_id),
+        (p) => p.role === "employee" && !areasWithManager.has(p.area_id ?? ""),
       ).length;
 
       const selfs = campaign.include_self_assessment ? involved.length : 0;

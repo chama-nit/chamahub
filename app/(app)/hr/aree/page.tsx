@@ -3,10 +3,15 @@
 // ---------------------------------------------------------------------------
 // Gestione delle aree aziendali (solo HR)
 // ---------------------------------------------------------------------------
-// La nomina a responsabile non avviene qui ma sulla scheda del dipendente: un
-// responsabile e' semplicemente una persona con ruolo "manager" assegnata a
+// La nomina a responsabile non avviene qui ma sulla scheda del dipendente, nel
+// campo "Aree da guidare". Un responsabile e' semplicemente una persona a cui
+// e' stata affidata almeno un'area - e puo' essere piu' d'una, cosi' come
+// un'area puo' avere piu' responsabili.
+//
+// (Testo storico, prima della migrazione 18: un responsabile era una persona
+// con ruolo "manager" assegnata a
 // quell'area. Il collegamento e' quindi sempre coerente e non esiste il caso di
-// un'area che punta a un responsabile che nel frattempo si e' spostato.
+// un'area che punta a un responsabile che nel frattempo si e' spostato.)
 // ---------------------------------------------------------------------------
 
 import { useState } from "react";
@@ -130,7 +135,7 @@ export default function HrAreasPage() {
     <>
       <PageHeader
         title="Aree"
-        description="Le aree raggruppano i dipendenti e determinano chi vede cosa: il responsabile di un'area accede al calendario, alle richieste e alle valutazioni di quell'area soltanto."
+        description="Le aree raggruppano i dipendenti e determinano chi vede cosa: chi guida un'area ne vede calendario, richieste e valutazioni. Una persona puo' guidarne piu' d'una, e un'area puo' avere piu' responsabili."
         actions={
           <Button
             variant="contained"
@@ -232,7 +237,9 @@ export default function HrAreasPage() {
                         ? (
                           <Alert severity="warning" sx={{ mt: 0.5, py: 0 }}>
                             Nessun responsabile: le campagne di valutazione non
-                            genereranno schede per quest&apos;area.
+                            genereranno schede per quest&apos;area. Si assegna
+                            dalla scheda di un dipendente, in &laquo;Aree da
+                            guidare&raquo;.
                           </Alert>
                         )
                         : (

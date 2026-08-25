@@ -1,9 +1,19 @@
 "use client";
 
 // ---------------------------------------------------------------------------
-// Vista del responsabile sulla propria area: elenco delle persone e calendario
-// aggregato delle presenze. Sola lettura: le comunicazioni restano di chi le
-// inserisce (anche a livello di policy RLS).
+// Vista del responsabile sulle aree che guida
+// ---------------------------------------------------------------------------
+// Elenco delle persone e calendario aggregato delle presenze. Sola lettura: le
+// comunicazioni restano di chi le inserisce (anche a livello di policy RLS).
+//
+// Da qui in avanti le aree possono essere piu' di una. Il selettore compare
+// solo quando servono - chi ne guida una sola non deve scegliere fra un'unica
+// opzione - e offre anche "tutte le aree", che e' la vista utile a chi vuole
+// sapere chi c'e' oggi senza distinguere il reparto.
+//
+// Nota: si guardano le aree GUIDATE (`managedAreas`), non quella di
+// appartenenza. Sono due cose diverse: un responsabile puo' lavorare in
+// Sviluppo e guidare anche Amministrazione.
 // ---------------------------------------------------------------------------
 
 import { useMemo, useState } from "react";
@@ -61,8 +71,10 @@ interface AreaData {
 
 export default function MyAreaPage() {
   const router = useRouter();
-  const { profile } = useAuth();
+  const { managedAreas } = useAuth();
 
+  // "all" = tutte le aree guidate insieme.
+  const [areaFilter, setAreaFilter] = useState<string>("all");
   const [tab, setTab] = useState<"calendar" | "people">("calendar");
   const [month, setMonth] = useState(() => {
     const now = new Date();
@@ -74,13 +86,25 @@ export default function MyAreaPage() {
   const to = monthEnd(month);
   const today = todayString();
 
+  // Le aree su cui interrogare il database: quella scelta, o tutte.
+  const areaIds = useMemo(
+    () =>
+      areaFilter === "all"
+        ? managedAreas.map((a) => a.id)
+        : [areaFilter],
+    [areaFilter, managedAreas],
+  );
+  const areaKey = areaIds.join(",");
+
   const { data, loading, error } = useAsync<AreaData>(async () => {
     const supabase = getSupabase();
 
+    if (areaIds.length === 0) return { people: [], entries: [] };
+
     const { data: people, error: peopleError } = await supabase
       .from("profiles")
-      .select("*")
-      .eq("area_id", profile!.area_id)
+      .select("*, areas:area_id (id, name, color)")
+      .in("area_id", areaIds)
       .eq("is_active", true)
       .order("full_name");
 
@@ -89,7 +113,7 @@ export default function MyAreaPage() {
     const { data: entries, error: entriesError } = await supabase
       .from("calendar_entries")
       .select("*, profiles:profile_id (id, full_name)")
-      .eq("area_id", profile!.area_id)
+      .in("area_id", areaIds)
       .gte("entry_date", from)
       .lte("entry_date", to)
       .order("entry_date");
@@ -100,7 +124,7 @@ export default function MyAreaPage() {
       people: (people ?? []) as Profile[],
       entries: (entries ?? []) as CalendarEntry[],
     };
-  }, [profile?.area_id, from, to]);
+  }, [areaKey, from, to]);
 
   const visibleEntries = useMemo(
     () =>
@@ -131,16 +155,16 @@ export default function MyAreaPage() {
     return map;
   }, [data, today]);
 
-  if (!profile?.area_id) {
+  if (managedAreas.length === 0) {
     return (
       <>
-        <PageHeader title="La mia area" />
+        <PageHeader title="Le mie aree" />
         <Card>
           <CardContent>
             <EmptyState
               icon={<GroupsIcon sx={{ fontSize: 48 }} />}
-              title="Nessuna area assegnata"
-              description="Il reparto HR non ti ha ancora assegnato a un'area: senza area non e' possibile visualizzare il team."
+              title="Nessuna area da guidare"
+              description="Il reparto HR non ti ha ancora affidato nessuna area. Finche' non lo fa, questa pagina resta vuota: non c'e' nessun team da mostrare."
             />
           </CardContent>
         </Card>
@@ -148,11 +172,40 @@ export default function MyAreaPage() {
     );
   }
 
+  const titolo = managedAreas.length === 1
+    ? `Area ${managedAreas[0].name}`
+    : areaFilter === "all"
+    ? `Le mie aree (${managedAreas.length})`
+    : `Area ${managedAreas.find((a) => a.id === areaFilter)?.name ?? ""}`;
+
   return (
     <>
       <PageHeader
-        title={profile.areas?.name ? `Area ${profile.areas.name}` : "La mia area"}
+        title={titolo}
         description="Chi c'e' e chi manca, giorno per giorno. Le comunicazioni sono inserite dai diretti interessati e qui sono in sola lettura."
+        actions={managedAreas.length > 1
+          ? (
+            <FormControl size="small" sx={{ minWidth: 220 }}>
+              <InputLabel id="filtro-area">Area</InputLabel>
+              <Select
+                labelId="filtro-area"
+                label="Area"
+                value={areaFilter}
+                onChange={(e) => {
+                  setAreaFilter(e.target.value);
+                  setPersonFilter("all");
+                }}
+              >
+                <MenuItem value="all">Tutte le mie aree</MenuItem>
+                {managedAreas.map((area) => (
+                  <MenuItem key={area.id} value={area.id}>
+                    {area.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )
+          : undefined}
       />
 
       <Card>

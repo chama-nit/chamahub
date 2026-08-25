@@ -23,6 +23,7 @@ import DialogContent from "@mui/material/DialogContent";
 import DialogContentText from "@mui/material/DialogContentText";
 import DialogTitle from "@mui/material/DialogTitle";
 import FormControl from "@mui/material/FormControl";
+import FormHelperText from "@mui/material/FormHelperText";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import IconButton from "@mui/material/IconButton";
 import InputLabel from "@mui/material/InputLabel";
@@ -54,9 +55,13 @@ import { ASSIGNABLE_ROLES, ROLE_LABELS } from "@/lib/labels";
 import { formatDay, initials } from "@/lib/format";
 import type { Area, Profile, UserRole } from "@/lib/types/models";
 
+/** Le aree guidate, per profilo. */
+type ManagedByProfile = Map<string, string[]>;
+
 interface Loaded {
   people: Profile[];
   areas: Area[];
+  managed: ManagedByProfile;
 }
 
 interface EditorState {
@@ -65,7 +70,10 @@ interface EditorState {
   email: string;
   fullName: string;
   role: UserRole;
+  /** Area di APPARTENENZA: dove la persona lavora. Una sola. */
   areaId: string;
+  /** Aree GUIDATE: di quali e' responsabile. Zero, una o piu'. */
+  managedAreaIds: string[];
   jobTitle: string;
   hiredOn: string;
   sendInvite: boolean;
@@ -77,6 +85,7 @@ const EMPTY_EDITOR: EditorState = {
   fullName: "",
   role: "employee",
   areaId: "",
+  managedAreaIds: [],
   jobTitle: "",
   hiredOn: "",
   sendInvite: false,
@@ -108,21 +117,33 @@ export default function HrEmployeesPage() {
   const { data, loading, error, reload } = useAsync<Loaded>(async () => {
     const supabase = getSupabase();
 
-    const [peopleResult, areasResult] = await Promise.all([
+    const [peopleResult, areasResult, managedResult] = await Promise.all([
       supabase
         .from("profiles")
         .select("*, areas:area_id (id, name, color)")
         .order("full_name")
         .order("id"),
       supabase.from("areas").select("*").order("name"),
+      supabase.from("area_managers").select("area_id, profile_id"),
     ]);
 
     if (peopleResult.error) throw new Error(peopleResult.error.message);
     if (areasResult.error) throw new Error(areasResult.error.message);
+    if (managedResult.error) throw new Error(managedResult.error.message);
+
+    const managed: ManagedByProfile = new Map();
+    for (const riga of (managedResult.data ?? []) as
+      { area_id: string; profile_id: string }[]) {
+      managed.set(riga.profile_id, [
+        ...(managed.get(riga.profile_id) ?? []),
+        riga.area_id,
+      ]);
+    }
 
     return {
       people: (peopleResult.data ?? []) as Profile[],
       areas: (areasResult.data ?? []) as Area[],
+      managed,
     };
   }, []);
 
@@ -154,13 +175,20 @@ export default function HrEmployeesPage() {
     if (!editor) return;
     setBusy(true);
     try {
+      // `role` NON contiene mai "manager": quel ruolo non si assegna, si
+      // ottiene ricevendo almeno un'area da guidare. La Edge Function rifiuta
+      // esplicitamente il tentativo, invece di scrivere un'etichetta senza
+      // poteri dietro.
       const payload: Record<string, unknown> = {
         full_name: editor.fullName.trim(),
-        role: editor.role,
         area_id: editor.areaId || null,
         job_title: editor.jobTitle.trim() || null,
         hired_on: editor.hiredOn || null,
       };
+
+      // Il ruolo si manda solo se cambia davvero verso uno assegnabile: per
+      // chi guida gia' delle aree il ruolo lo governa il database.
+      if (editor.role !== "manager") payload.role = editor.role;
 
       if (editor.mode === "create") {
         const result = await callFunction<{
@@ -206,6 +234,20 @@ export default function HrEmployeesPage() {
           id: editor.id,
           ...payload,
         });
+
+        // Le aree guidate viaggiano a parte: sono una tabella loro, e
+        // l'elenco arriva completo, cosi' la revoca e' rappresentata dal
+        // semplice fatto che un'area non c'e' piu'.
+        const prima = [...(data?.managed.get(editor.id!) ?? [])].sort();
+        const dopo = [...editor.managedAreaIds].sort();
+        if (prima.join(",") !== dopo.join(",")) {
+          await callFunction("admin-users", {
+            action: "set_managed_areas",
+            id: editor.id,
+            managed_area_ids: dopo,
+          });
+        }
+
         toast.success("Dipendente aggiornato.");
       }
 
@@ -475,6 +517,35 @@ export default function HrEmployeesPage() {
                               : "default"}
                             label={ROLE_LABELS[person.role]}
                           />
+                          {/* Le aree guidate accanto al ruolo: e' li' che
+                              "Responsabile" smette di essere un'etichetta e
+                              diventa un'informazione utile. */}
+                          {(data?.managed.get(person.id)?.length ?? 0) > 0 && (
+                            <Stack
+                              direction="row"
+                              spacing={0.5}
+                              useFlexGap
+                              sx={{ flexWrap: "wrap", mt: 0.5 }}
+                            >
+                              {(data?.managed.get(person.id) ?? []).map((areaId) => {
+                                const area = data?.areas.find((a) => a.id === areaId);
+                                return (
+                                  <Chip
+                                    key={areaId}
+                                    size="small"
+                                    variant="outlined"
+                                    label={area?.name ?? "?"}
+                                    sx={{
+                                      height: 20,
+                                      fontSize: "0.7rem",
+                                      borderColor: area?.color ?? undefined,
+                                      color: area?.color ?? undefined,
+                                    }}
+                                  />
+                                );
+                              })}
+                            </Stack>
+                          )}
                         </TableCell>
 
                         <TableCell>{person.job_title ?? "—"}</TableCell>
@@ -524,6 +595,7 @@ export default function HrEmployeesPage() {
               fullName: person.full_name,
               role: person.role,
               areaId: person.area_id ?? "",
+              managedAreaIds: data?.managed.get(person.id) ?? [],
               jobTitle: person.job_title ?? "",
               hiredOn: person.hired_on ?? "",
               sendInvite: false,
@@ -626,31 +698,97 @@ export default function HrEmployeesPage() {
                   </Select>
                 </FormControl>
 
-                <FormControl fullWidth>
+                <FormControl fullWidth disabled={editor.managedAreaIds.length > 0}>
                   <InputLabel id="editor-role">Ruolo</InputLabel>
                   <Select
                     labelId="editor-role"
                     label="Ruolo"
-                    value={editor.role}
+                    value={editor.managedAreaIds.length > 0 ? "manager" : editor.role}
                     onChange={(event) =>
                       setEditor({ ...editor, role: event.target.value as UserRole })}
                   >
-                    {/* Nell'elenco delle assegnazioni non compare
-                        SystemAdmin: non e' un ruolo che si da' da qui. */}
-                    {ASSIGNABLE_ROLES.map((role) => (
+                    {/* Nell'elenco non compaiono ne' SystemAdmin ne'
+                        Responsabile: il primo non si da' da qui, il secondo
+                        non si da' affatto - si ottiene ricevendo un'area. */}
+                    {ASSIGNABLE_ROLES.filter((role) => role !== "manager").map((role) => (
                       <MenuItem key={role} value={role}>
                         {ROLE_LABELS[role]}
                       </MenuItem>
                     ))}
+                    {editor.managedAreaIds.length > 0 && (
+                      <MenuItem value="manager">{ROLE_LABELS.manager}</MenuItem>
+                    )}
                   </Select>
+                  {editor.managedAreaIds.length > 0 && (
+                    <FormHelperText>
+                      Il ruolo segue le aree guidate: togliendole torna
+                      &laquo;Dipendente&raquo;.
+                    </FormHelperText>
+                  )}
                 </FormControl>
               </Stack>
 
-              {editor.role === "manager" && !editor.areaId && (
-                <Alert severity="warning">
-                  Un responsabile senza area non puo&apos; valutare nessuno:
-                  assegna l&apos;area di competenza.
-                </Alert>
+              {/* -------------------------------------------------------------
+                  Aree guidate: la cosa che rende qualcuno un responsabile.
+                  E' distinta dall'area di appartenenza qui sopra - si puo'
+                  lavorare in Sviluppo e guidare Amministrazione - e puo'
+                  contenerne piu' di una.
+                  ------------------------------------------------------------- */}
+              {editor.mode === "edit" && (
+                <FormControl fullWidth>
+                  <InputLabel id="editor-managed">Aree da guidare</InputLabel>
+                  <Select
+                    labelId="editor-managed"
+                    label="Aree da guidare"
+                    multiple
+                    value={editor.managedAreaIds}
+                    onChange={(event) => {
+                      const valore = event.target.value;
+                      setEditor({
+                        ...editor,
+                        managedAreaIds: typeof valore === "string"
+                          ? valore.split(",")
+                          : valore,
+                      });
+                    }}
+                    renderValue={(selezionate) =>
+                      selezionate.length === 0 ? "Nessuna" : (
+                        <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: "wrap" }}>
+                          {selezionate.map((id) => {
+                            const area = data?.areas.find((a) => a.id === id);
+                            return (
+                              <Chip
+                                key={id}
+                                size="small"
+                                label={area?.name ?? id}
+                                sx={{
+                                  bgcolor: `${area?.color ?? "#888"}22`,
+                                  color: area?.color ?? undefined,
+                                  fontWeight: 600,
+                                }}
+                              />
+                            );
+                          })}
+                        </Stack>
+                      )}
+                  >
+                    {data?.areas.map((area) => (
+                      <MenuItem key={area.id} value={area.id}>
+                        <Checkbox
+                          size="small"
+                          checked={editor.managedAreaIds.includes(area.id)}
+                        />
+                        {area.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  <FormHelperText>
+                    Chi guida almeno un&apos;area diventa responsabile e ne
+                    vede calendario, richieste e schede di valutazione. Un&apos;area
+                    puo&apos; averne piu&apos; d&apos;uno: vedono le stesse schede, e
+                    vale la prima consegnata.
+                  </FormHelperText>
+                </FormControl>
               )}
 
               <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>

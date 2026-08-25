@@ -50,7 +50,7 @@ export default function RequestDetailPage(
 
   const router = useRouter();
   const toast = useToast();
-  const { profile } = useAuth();
+  const { profile, managedAreas } = useAuth();
 
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
@@ -84,10 +84,16 @@ export default function RequestDetailPage(
 
   const request = data?.request;
   const isRequester = request?.requester_id === profile?.id;
-  // Chi puo' cambiare lo stato: l'HR sempre, il responsabile per le richieste
-  // indirizzate a lui. Le policy RLS applicano comunque la stessa regola.
+  // Chi puo' cambiare lo stato: l'HR sempre, e chi guida l'area della
+  // richiesta. Le policy RLS applicano comunque la stessa regola - il
+  // controllo qui serve solo a non mostrare comandi che il database
+  // rifiuterebbe.
+  //
+  // Si confronta con le aree GUIDATE: una richiesta arriva all'area del
+  // richiedente, che puo' non essere quella di appartenenza di chi la gestisce.
   const canHandle = profile?.role === "hr" ||
-    (profile?.role === "manager" && request?.recipient === "manager" &&
+    (request?.recipient === "manager" &&
+      managedAreas.some((a) => a.id === request?.area_id) &&
       !isRequester);
 
   async function sendReply() {

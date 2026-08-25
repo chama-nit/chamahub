@@ -62,13 +62,16 @@ interface Loaded {
 }
 
 export default function EvaluationsPage() {
-  const { profile } = useAuth();
+  const { profile, managedAreas } = useAuth();
   const [tab, setTab] = useState<"todo" | "received" | "area">("todo");
 
-  // Il responsabile con un'area assegnata puo' rivedere le autovalutazioni dei
-  // propri collaboratori. La stessa condizione e' scritta nelle policy RLS: qui
-  // serve solo a non interrogare una tabella che restituirebbe zero righe.
-  const canReviewArea = profile?.role === "manager" && Boolean(profile?.area_id);
+  // Chi guida almeno un'area puo' rivedere le autovalutazioni dei suoi
+  // collaboratori. La stessa condizione e' scritta nelle policy RLS: qui serve
+  // solo a non interrogare una tabella che restituirebbe zero righe.
+  //
+  // Si guardano le aree GUIDATE, non quella di appartenenza: sono due cose
+  // diverse dalla migrazione 18.
+  const canReviewArea = managedAreas.length > 0;
 
   const { data, loading, error } = useAsync<Loaded>(async () => {
     const supabase = getSupabase();
