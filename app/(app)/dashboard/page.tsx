@@ -91,7 +91,7 @@ export default function DashboardPage() {
         title={`Ciao ${firstName}`}
         description={
           <>
-            Accedi come <strong>{ROLE_LABELS[role]}</strong>
+            Accesso eseguito come <strong>{ROLE_LABELS[role]}</strong>
             {profile?.areas?.name ? ` dell'area ${profile.areas.name}` : ""}.
           </>
         }

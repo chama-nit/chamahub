@@ -224,12 +224,13 @@ export default function RequestsPage() {
                                 size="small"
                                 label={request.areas.name}
                                 sx={{
-                                  mt: 0.4,
+                                  mt: 0,
                                   height: 20,
                                   fontSize: "0.7rem",
                                   fontWeight: 600,
                                   bgcolor: `${request.areas.color ?? "#888"}22`,
                                   color: request.areas.color ?? undefined,
+                                  ml: 0.2
                                 }}
                               />
                             )}
